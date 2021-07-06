@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Procedure:
  * - First, establish a connection to the database by declaring a class 'Connection'
@@ -6,2012 +7,3534 @@
  * - Create a model by declaring the class 'Model'
  * - Access the model to interact with a table in the database
  *
- * @name Model
  * @version 1.0.0
  * @author masloff (irtex)
  * @copyright 2021 iRTEX
  */
 
-namespace phpgoose;
+namespace phpsqlgoose {
 
-use ErrorException;
-use Exception;
-use mysqli;
-use Wrapper\Time;
-use function Engine\bind;
-use function Engine\sql_escape_string;
-use function Helpers\sanitize_name;
-use function mysqli_connect;
-use function mysqli_error;
+    use ErrorException;
+    use Exception;
+    use mysqli;
+    use mysqli_result;
+    use phpsqlgoose\Engine\Operator\Operator;
+    use phpsqlgoose\Engine\Parser\ParserOperators;
+    use phpsqlgoose\Engine\Parser\ParserSelect;
+    use phpsqlgoose\Engine\Parser\ParserUpdate;
+    use phpsqlgoose\Engine\Parser\ParserWhile;
+    use phpsqlgoose\Wrapper\Point;
+    use function phpsqlgoose\Engine\bind;
+    use function phpsqlgoose\Engine\sql_escape_string;
+    use function phpsqlgoose\Helpers\sanitize_name;
 
-define("TYPE_ANY", 'any');
-define("TYPE_STRING", 'string');
-define("TYPE_VARCHAR", 'varchar');
-define("TYPE_CHAR", 'char');
-define("TYPE_TEXT", 'text');
-define("TYPE_MEDIUMTEXT", 'mediumtext');
-define("TYPE_LONGTEXT", 'longtext');
-define("TYPE_INT", 'int');
-define("TYPE_SMALLINT", 'smallint');
-define("TYPE_BIGINT", 'bigint');
-define("TYPE_DOUBLE", 'double');
-define("TYPE_BOOLEAN", 'boolean');
-define("TYPE_TIME", 'time');
-define("TYPE_DATE", 'date');
-define("TYPE_DATETIME", 'datetime');
-define("TYPE_TIMESTAMP", 'timestamp');
-define("TYPE_PASSWORD", 'password');
-define("TYPE_URL", 'url');
-define("TYPE_OBJECT", 'json');
-define("TYPE_BINARY", 'binary');
-define("TYPE_BLOB", 'blob');
-define("TYPE_VARBINARY", 'varbinary');
-define("TYPE_MEDIUMBLOB", 'mediumblob');
-define("TYPE_LONGBLOB", 'longblob');
-define("TYPE_BLOB", 'blob');
-define("TYPE_POINT", 'point');
-define("TYPE_LINESTRING", 'linestring');
-define("TYPE_POLYGON", 'polygon');
-define("TYPE_GEOMETRY", 'geometry');
-define("IS_NOT_TYPE", 'This data type is not supported within an array. Please request data from this cell using the special method');
+    /**
+     * Version of phpsqlgoose
+     */
+    define("VERSION", '1.0.0');
 
-/**
- * A global variable that contains the class of the database connection 'Connection'
- */
-global $phpgoose_connection;
+    /**
+     * A data type that will attempt to cast any incoming values into a string
+     */
+    define("TYPE_STRING", 'string');
 
-$phpgoose_connection = false;
+    /**
+     * String data of variable size.
+     * Use n to specify the string size in bytes (values from 1 to 8000 are allowed) or use max to specify a column size
+     * limit up to the maximum storage size, which is 2^31-1 bytes (2GB). For single-byte encodings such as Latin,
+     * the size at storage is n bytes + 2 bytes and the number of characters stored is n.
+     * For multibyte encodings, the size when stored is also n bytes + 2 bytes,
+     * but the number of stored characters may be less than n. ISO synonyms for varchar are charvarying or charactarying.
+     */
+    define("TYPE_VARCHAR", 'varchar');
 
-/**
- * Error in SQL query processing
- * @package phpgoose
- */
-class SQLException extends Exception
-{
-}
+    /**
+     * String data of fixed size. n specifies the size of the string in bytes and should have a value between 1 and 8000.
+     * For single-byte encodings such as Latin, the size in storage is n bytes and the number of characters stored is also n.
+     * For multibyte encodings, the storage size is also n bytes, but the number of stored characters may be less than n.
+     */
+    define("TYPE_CHAR", 'char');
 
-/**
- * Creates a global connection to MySQL for further work with phpgoose models.
- * @package phpgoose
- */
-class Connection
-{
+    /**
+     * Variable length data not in Unicode in the server charset and with a maximum string length of 2^31-1 (2,147,483,647).
+     * If two-byte characters are used in the server codepage, the amount of space occupied by the type still does not
+     * exceed 2,147,483,647 bytes. It may be less than 2,147,483,647 bytes - depending on the character string.
+     */
+    define("TYPE_TEXT", 'text');
 
-    const PROVIDER_MYSQL = "mysql";
-    const PROVIDER_MYSQLI = "mysqli";
-    const LOCALHOST = '127.0.0.1';
+    /**
+     * A TEXT column with a maximum length of 255 (28 - 1) characters.
+     * The effective maximum length is less if the value contains multi-byte characters.
+     * Each TINYTEXT value is stored using a one-byte length prefix that indicates the number of bytes in the value.
+     */
+    define("TYPE_TINYTEXT", 'tinytext');
 
-    private $connection = false;
-    private $provider = false;
-    private $db = false;
-    private $db_selected = false;
-    private $charset = 'utf8';
-    private $host = "localhost";
-    private $username = "";
-    private $password = "";
-    private $port = "";
+    /**
+     * A TEXT column with a maximum length of 16,777,215 (224 - 1) characters.
+     * The effective maximum length is less if the value contains multi-byte characters
+     * Each MEDIUMTEXT value is stored using a three-byte length prefix that indicates the number of bytes in the value.
+     */
+    define("TYPE_MEDIUMTEXT", 'mediumtext');
+
+    /**
+     * A TEXT column with a maximum length of 4,294,967,295 or 4GB (232 - 1) characters.
+     * The effective maximum length is less if the value contains multi-byte characters.
+     * The effective maximum length of LONGTEXT columns also depends on the configured maximum packet size in the
+     * client/server protocol and available memory. Each LONGTEXT value is stored using a four-byte length prefix
+     * that indicates the number of bytes in the value.
+     */
+    define("TYPE_LONGTEXT", 'longtext');
+
+    /**
+     * A normal-size integer. When marked UNSIGNED, it ranges from 0 to 4294967295,
+     * otherwise its range is -2147483648 to 2147483647 (SIGNED is the default). If a column has been set to ZEROFILL,
+     * all values will be prepended by zeros so that the INT value contains a number of M digits. INTEGER is a synonym for INT.
+     */
+    define("TYPE_INT", 'int');
+
+    /**
+     * A small integer. The signed range is -32768 to 32767. The unsigned range is 0 to 65535.
+     * If a column has been set to ZEROFILL, all values will be prepended by zeros so that the SMALLINT value contains a number of M digits.
+     */
+    define("TYPE_SMALLINT", 'smallint');
+
+    /**
+     * A large integer. The signed range is -9223372036854775808 to 9223372036854775807.
+     * The unsigned range is 0 to 18446744073709551615.
+     * If a column has been set to ZEROFILL, all values will be prepended by zeros so that the BIGINT value contains
+     * a number of M digits.
+     */
+    define("TYPE_BIGINT", 'bigint');
+
+    /**
+     * A normal-size (double-precision) floating-point number (see FLOAT for a single-precision floating-point number).
+     *
+     * Allowable values are:
+     * 1. -1.7976931348623157E+308 to -2.2250738585072014E-308
+     * 2. 0
+     * 3. 2.2250738585072014E-308 to 1.7976931348623157E+308
+     * These are the theoretical limits, based on the IEEE standard.
+     * The actual range might be slightly smaller depending on your hardware or operating system.
+     *
+     * M is the total number of digits and D is the number of digits following the decimal point. If M and D are omitted, values are stored to the limits allowed by the hardware. A double-precision floating-point number is accurate to approximately 15 decimal places.
+     */
+    define("TYPE_DOUBLE", 'double');
+
+    /**
+     * These types are synonyms for TINYINT(1). A value of zero is considered false. Non-zero values are considered true.
+     */
+    define("TYPE_BOOLEAN", 'boolean');
+
+    /**
+     * A time. The range is '-838:59:59.999999' to '838:59:59.999999'.
+     * Microsecond precision can be from 0-6; if not specified 0 is used.
+     * Microseconds have been available since MariaDB 5.3.
+     */
+    define("TYPE_TIME", 'time');
+    
+    /**
+     * A date. The supported range is '1000-01-01' to '9999-12-31'.
+     * MariaDB displays DATE values in 'YYYY-MM-DD' format,
+     * but can be assigned dates in looser formats, including strings or numbers,
+     * as long as they make sense. These include a short year, YY-MM-DD, no delimiters,
+     * YYMMDD, or any other acceptable delimiter, for example YYYY/MM/DD. For details, see date and time literals.
+     */
+    define("TYPE_DATE", 'date');
+
+    /**
+     * A date and time combination.
+     * MariaDB displays DATETIME values in 'YYYY-MM-DD HH:MM:SS.ffffff' format,
+     * but allows assignment of values to DATETIME columns using either strings or numbers.
+     * For details, see date and time literals.
+     */
+    define("TYPE_DATETIME", 'datetime');
+
+    /**
+     * A timestamp in the format YYYY-MM-DD HH:MM:SS.ffffff.
+     * The timestamp field is generally used to define at which moment in time a row was added
+     * or updated and by default will automatically be assigned the current datetime when a record
+     * is inserted or updated. The automatic properties only apply to the first TIMESTAMP in the record;
+     * subsequent TIMESTAMP columns will not be changed.
+     */
+    define("TYPE_TIMESTAMP", 'timestamp');
+
+    /**
+     * Special data type. Hash the incoming value and write the hash of the transmitted password to the database.
+     * In the find functions, the comparison is done with the unencrypted password.
+     */
+    define("TYPE_PASSWORD", 'password');
+
+    /**
+     * Special data type. Checks if the string is a URL and writes it to the database,
+     * if the string is not a URL, the method to which the value is passed will throw an exception
+     */
+    define("TYPE_URL", 'url');
+
+    /**
+     * JSON is an alias for LONGTEXT introduced for compatibility reasons with MySQL's JSON data type.
+     * MariaDB implements this as a LONGTEXT rather, as the JSON data type contradicts the SQL standard,
+     * and MariaDB's benchmarks indicate that performance is at least equivalent.
+     */
+    define("TYPE_OBJECT", 'json');
+
+    /**
+     * The BINARY type is similar to the CHAR type, but stores binary byte strings rather than non-binary character strings.
+     * M represents the column length in bytes.
+     * It contains no character set, and comparison and sorting are based on the numeric value of the bytes.
+     * If the maximum length is exceeded, and SQL strict mode is not enabled , the extra characters will be dropped with a warning.
+     * If strict mode is enabled, an error will occur.
+     *
+     * BINARY values are right-padded with 0x00 (the zero byte) to the specified length when inserted.
+     * The padding is not removed on select, so this needs to be taken into account when sorting and comparing,
+     * where all bytes are significant. The zero byte, 0x00 is less than a space for comparison purposes.
+     */
+    define("TYPE_BINARY", 'binary');
+
+    /**
+     * A BLOB column with a maximum length of 65,535 (216 - 1) bytes.
+     * Each BLOB value is stored using a two-byte length prefix that indicates the number of bytes in the value.
+     * An optional length M can be given for this type.
+     * If this is done, MariaDB creates the column as the smallest BLOB type large enough to hold values M bytes long.
+     */
+    define("TYPE_BLOB", 'blob');
+
+    /**
+     * The VARBINARY type is similar to the VARCHAR type,
+     * but stores binary byte strings rather than non-binary character strings. M represents the maximum column length in bytes.
+     * It contains no character set, and comparison and sorting are based on the numeric value of the bytes.
+     * If the maximum length is exceeded, and SQL strict mode is not enabled,
+     * the extra characters will be dropped with a warning. If strict mode is enabled, an error will occur.
+     */
+    define("TYPE_VARBINARY", 'varbinary');
+
+    /**
+     * A BLOB column with a maximum length of 16,777,215 (224 - 1) bytes.
+     * Each MEDIUMBLOB value is stored using a three-byte length prefix that indicates the number of bytes in the value.
+     */
+    define("TYPE_MEDIUMBLOB", 'mediumblob');
+
+    /**
+     * A BLOB column with a maximum length of 4,294,967,295 bytes or 4GB (232 - 1).
+     * The effective maximum length of LONGBLOB columns depends on the configured maximum packet
+     * size in the client/server protocol and available memory. Each LONGBLOB value is stored using a
+     * four-byte length prefix that indicates the number of bytes in the value.
+     */
+    define("TYPE_LONGBLOB", 'longblob');
+
+    /**
+     * Type of coordinate in space
+     */
+    define("TYPE_POINT", 'point');
+
+    /**
+     * Set of coordinates in space
+     */
+    define("TYPE_LINESTRING", 'linestring');
+
+    /**
+     * Regular expression checking nickname
+     */
+    define('REGEX_NICKNAME', '/^[a-zA-Z0-9_.]{1,30}$/i');
+
+    /**
+     * Regular expression checking email
+     */
+    define('REGEX_EMAIL', '/^(?!(?:(?:\\x22?\\x5C[\\x00-\\x7E]\\x22?)|(?:\\x22?[^\\x5C\\x22]\\x22?)){255,})(?!(?:(?:\\x22?\\x5C[\\x00-\\x7E]\\x22?)|(?:\\x22?[^\\x5C\\x22]\\x22?)){65,}@)(?:(?:[\\x21\\x23-\\x27\\x2A\\x2B\\x2D\\x2F-\\x39\\x3D\\x3F\\x5E-\\x7E]+)|(?:\\x22(?:[\\x01-\\x08\\x0B\\x0C\\x0E-\\x1F\\x21\\x23-\\x5B\\x5D-\\x7F]|(?:\\x5C[\\x00-\\x7F]))*\\x22))(?:\\.(?:(?:[\\x21\\x23-\\x27\\x2A\\x2B\\x2D\\x2F-\\x39\\x3D\\x3F\\x5E-\\x7E]+)|(?:\\x22(?:[\\x01-\\x08\\x0B\\x0C\\x0E-\\x1F\\x21\\x23-\\x5B\\x5D-\\x7F]|(?:\\x5C[\\x00-\\x7F]))*\\x22)))*@(?:(?:(?!.*[^.]{64,})(?:(?:(?:xn--)?[a-z0-9]+(?:-+[a-z0-9]+)*\\.){1,126}){1,}(?:(?:[a-z][a-z0-9]*)|(?:(?:xn--)[a-z0-9]+))(?:-+[a-z0-9]+)*)|(?:\\[(?:(?:IPv6:(?:(?:[a-f0-9]{1,4}(?::[a-f0-9]{1,4}){7})|(?:(?!(?:.*[a-f0-9][:\\]]){7,})(?:[a-f0-9]{1,4}(?::[a-f0-9]{1,4}){0,5})?::(?:[a-f0-9]{1,4}(?::[a-f0-9]{1,4}){0,5})?)))|(?:(?:IPv6:(?:(?:[a-f0-9]{1,4}(?::[a-f0-9]{1,4}){5}:)|(?:(?!(?:.*[a-f0-9]:){5,})(?:[a-f0-9]{1,4}(?::[a-f0-9]{1,4}){0,3})?::(?:[a-f0-9]{1,4}(?::[a-f0-9]{1,4}){0,3}:)?)))?(?:(?:25[0-5])|(?:2[0-4][0-9])|(?:1[0-9]{2})|(?:[1-9]?[0-9]))(?:\\.(?:(?:25[0-5])|(?:2[0-4][0-9])|(?:1[0-9]{2})|(?:[1-9]?[0-9]))){3}))\\]))$/iD');
+
+    /**
+     * A global variable that contains the class of the database connection 'Connection'
+     */
+    global $phpsqlgoose_connection;
+
+    $phpsqlgoose_connection = false;
+
+    /**
+     * Check the version of PHP against the minimum required
+     */
+    if (version_compare(PHP_VERSION, '7.0.0') < 0) {
+        $PHP_VERSION = PHP_VERSION;
+        throw new ErrorException("You are using too old version of PHP ($PHP_VERSION). Version 7.0.0 is required.");
+    }
+
+
+    /**
+     * Error in SQL query processing
+     * @package phpgoose
+     */
+    class SQLException extends Exception
+    {
+    }
+
+
+    /**
+     * Exception when a string does not match a regular expression
+     * @package phpsqlgoose
+     */
+    class RegexException extends Exception
+    {
+    }
+
+
+    /**
+     * Exception where string does not match filter requirements. Usually occurs in insert, update functions
+     * @package phpsqlgoose
+     */
+    class FilterException extends Exception
+    {
+    }
+
 
     /**
      * Creates a global connection to MySQL for further work with phpgoose models.
-     *
-     * @param string $hostname Server name string (example: localhost or 127.0.0.1)
-     * @param string $username MYSQL username to connect to the server
-     * @param string $password MYSQL password to connect to the server
-     * @param string $db_name Database name for connecting to MYSQL
-     * @param number|boolean $port MYSQL port to connect to the server (default: standard mysql port)
-     * @param string $charset MYSQL database encoding (default: utf8)
-     * @param string $new_link Database connection name (default: main)
-     * @param array|boolean $client_flags Optional flags to connect to the database (default: false)
-     * @throws SQLException
-     * @throws ErrorException
-     * @author masloff (irtex)
-     * @copyright 2021 iRTEX
+     * @package phpgoose
      */
-    public function __construct(string $hostname, string $username, string $password, string $db_name, $port = false, string $charset = 'utf8', string $new_link = "main", $client_flags = false)
+    class Connection
     {
-        global $phpgoose_connection;
 
-        if (version_compare(PHP_VERSION, '4.3.0') < 0) {
-            $PHP_VERSION = PHP_VERSION;
-            throw new ErrorException("You are using too old version of PHP ($PHP_VERSION). Version 4.3.0 is required.");
-        }
+        private $connection = false;
+        private $db;
+        private $db_selected = false;
+        private $charset;
+        private $host;
+        private $username;
+        private $password;
+        private $error = false;
 
-        $this->charset = strval($charset);
-        $this->db = sanitize_name($db_name);
-        $this->host = strval($hostname);
-        $this->username = strval($username);
-        $this->password = strval($password);
+        /**
+         * Creates a global connection to MySQL for further work with phpgoose models.
+         *
+         * @param string $hostname Server name string (example: localhost or 127.0.0.1)
+         * @param string $username MYSQL username to connect to the server
+         * @param string $password MYSQL password to connect to the server
+         * @param string $db_name Database name for connecting to MYSQL
+         * @param string $charset MYSQL database encoding (default: utf8)
+         * @throws ErrorException
+         * @author masloff (irtex)
+         * @copyright 2021 iRTEX
+         */
+        public function __construct(string $hostname = 'localhost', string $username = 'root', string $password = 'root', string $db_name = 'My App', string $charset = 'utf8')
+        {
+            global $phpsqlgoose_connection;
 
-        if (is_int($port)) {
-            $host = strval("$hostname:$port");
-            $this->password = intval($port);
-        } else {
-            $host = strval($hostname);
-            $this->password = false;
-        }
+            $this->charset = strval($charset);
+            $this->db = sanitize_name($db_name);
+            $this->host = strval($hostname);
+            $this->username = strval($username);
+            $this->password = strval($password);
 
-        if (function_exists("mysql_connect")) {
-            $this->connection = mysql_connect($host, $username, $password, $new_link, $client_flags);
-            $this->provider = Connection::PROVIDER_MYSQL;
+            try {
+                
+                $this->connection = mysqli_connect($this->host, $username, $password);
 
-            if (!$this->connection) {
-                throw new SQLException(mysql_error());
+                if (mysqli_connect_errno()) {
+                
+                    /**
+                     * Connection not completed
+                     */
+                    $this->error = mysqli_connect_error();
+                
+                } else {
+                    
+                    /**
+                     * Connection completed
+                     */
+                    
+                    $query = bind('CREATE DATABASE $bind', [
+                        '$bind' => $this->db
+                    ]);
+
+                    $phpsqlgoose_connection = $this;
+                    mysqli_set_charset($this->connection, $this->charset);
+                    $this->db_selected = $this->connection->select_db($this->db);
+
+                    if ($this->db_selected == false) {
+                        if (!$this->connection->query($query, MYSQLI_USE_RESULT)) {
+                            $this->error = (mysqli_error($this->connection));
+                        } else {
+                            $this->db_selected = $this->connection->select_db($this->db);
+                            $phpsqlgoose_connection = $this;
+                        }
+                    }
+
+                }
+            } catch (Exception $e) {
+                $this->error = $e;
             }
-        } elseif (function_exists("mysqli_connect")) {
-            $this->connection = mysqli_connect($host, $username, $password);
-            $this->provider = Connection::PROVIDER_MYSQLI;
 
-            if (mysqli_connect_errno()) {
-                throw new SQLException(mysqli_connect_error());
-            }
-        } else {
-            throw new ErrorException("Unable to install an ISP because none of the functions to connect to SQL are found");
         }
 
-        if ($this->connection) {
-            $query = bind('CREATE DATABASE $bind', [
-                '$bind' => $this->db
-            ]);
+        /**
+         * @return array|false
+         */
+        public function __debugInfo()
+        {
+            if ($this->connection instanceof mysqli) {
+                return $this->connection->get_connection_stats();
+            }
 
-            if ($this->provider == Connection::PROVIDER_MYSQL) {
-                $phpgoose_connection = $this;
-                mysql_set_charset($this->charset);
-                $this->db_selected = mysql_select_db($this->db, $this->connection);
-            } elseif ($this->provider == Connection::PROVIDER_MYSQLI) {
-                $phpgoose_connection = $this;
-                mysqli_set_charset($this->connection, $this->charset);
-                $this->db_selected = $this->connection->select_db($this->db);
+            return false;
+        }
+
+        /**
+         * @return array
+         */
+        public function __serialize(): array
+        {
+            return array(
+                'db' => $this->db,
+                'host' => $this->host,
+                'username' => $this->username,
+                'password' => $this->password,
+                'charset' => $this->charset
+            );
+        }
+
+        /**
+         * @param array $data
+         * @throws ErrorException
+         */
+        public function __unserialize(array $data)
+        {
+            $this->charset = strval($data['charset']);
+            $this->db = sanitize_name($data['db']);
+            $this->host = strval($data['host']);
+            $this->username = strval($data['username']);
+            $this->password = strval($data['password']);
+
+            $this->__construct($this->host, $this->username, $this->password, $this->db, $this->charset);
+        }
+
+        /**
+         * Get a direct link to the SQL connection
+         *
+         * @return mysqli|false Direct connection to mysql
+         * @copyright 2021 iRTEX
+         *
+         * @author masloff (irtex)
+         */
+        public function get_connection()
+        {
+            return $this->connection;
+        }
+
+        /**
+         * Checks for connection to the SQL database
+         *
+         * @noinspection PhpUnused
+         * @return bool
+         */
+        public function is_connected()
+        {
+            if ($this->get_connection() == false) {
+                return false;
+            }
+
+            return $this->get_connection()->ping();
+        }
+
+    }
+
+
+    /**
+     * Data schema for creating the phpgoose model. It is used to declare fields in a table and their configurations: field type, default value, uniqueness, etc.
+     * @package phpgoose
+     */
+    class Schema
+    {
+
+        /**
+         *
+         */
+        const NOT_DEFINED = 'not-defined';
+
+        /**
+         * @var array
+         */
+        private $fluids = array();
+        /**
+         * @var array
+         */
+        private $data_types = [
+            TYPE_VARBINARY,
+            TYPE_BLOB,
+            TYPE_MEDIUMBLOB,
+            TYPE_POINT,
+            TYPE_LINESTRING,
+            TYPE_BINARY,
+            TYPE_LONGTEXT,
+            TYPE_MEDIUMTEXT,
+            TYPE_STRING,
+            TYPE_CHAR,
+            TYPE_INT,
+            TYPE_BIGINT,
+            TYPE_SMALLINT,
+            TYPE_BOOLEAN,
+            TYPE_TIME,
+            TYPE_DATE,
+            TYPE_DOUBLE,
+            TYPE_TEXT,
+            TYPE_VARCHAR,
+            TYPE_PASSWORD,
+            TYPE_URL,
+            TYPE_OBJECT,
+            TYPE_DATETIME,
+            TYPE_TIMESTAMP
+        ];
+        /**
+         * @var array|array[]
+         */
+        private $filter = [];
+        /**
+         * List of field types that do not support specifying a particular size
+         * @var array
+         */
+        private $fluids_without_size = [
+            TYPE_DOUBLE,
+            TYPE_BOOLEAN,
+            TYPE_TIME,
+            TYPE_DATE,
+            TYPE_OBJECT,
+            TYPE_DATETIME,
+            TYPE_BLOB,
+            TYPE_MEDIUMBLOB,
+            TYPE_LONGBLOB,
+            TYPE_TIMESTAMP
+        ];
+
+        /**
+         * Data schema for creating the phpgoose model. It is used to declare fields in a table and their configurations: field type, default value, uniqueness, etc.
+         *
+         * @param array $fluids An array of database table fields
+         * @throws ErrorException
+         * @copyright 2021 iRTEX
+         * @author masloff (irtex)
+         */
+        public function __construct(array $fluids)
+        {
+            $this->filter = array(
+                'type' => [
+                    'wrapper' => function ($e) {
+                        return strval($e);
+                    },
+                    'default' => 'TYPE_STRING'
+                ],
+                'size' => [
+                    'wrapper' => function ($e) {
+                        return strval($e);
+                    },
+                    'default' => false
+                ],
+                'constraint' => [
+                    'wrapper' => function ($e) {
+                        return boolval($e);
+                    },
+                    'default' => false
+                ],
+                'primary' => [
+                    'wrapper' => function ($e) {
+                        return boolval($e);
+                    },
+                    'default' => false
+                ],
+                'unique' => [
+                    'wrapper' => function ($e) {
+                        return boolval($e);
+                    },
+                    'default' => false
+                ],
+                'default' => [
+                    'wrapper' => function ($e) {
+                        if ($e instanceof Point) {
+                            return $e;
+                        }
+                        return strval($e);
+                    },
+                    'default' => false
+                ],
+                'null' => [
+                    'wrapper' => function ($e) {
+                        return boolval($e);
+                    },
+                    'default' => false
+                ],
+                'not_null' => [
+                    'wrapper' => function ($e) {
+                        return boolval($e);
+                    },
+                    'default' => false
+                ],
+                'auto_increment' => [
+                    'wrapper' => function ($e) {
+                        return boolval($e);
+                    },
+                    'default' => false,
+                    '$not' => ['default']
+                ],
+                'comment' => [
+                    'wrapper' => function ($e) {
+                        return strval($e);
+                    },
+                    'default' => false
+                ],
+                'regex' => [
+                    'wrapper' => function ($e) {
+                        return strval($e);
+                    },
+                    'default' => false
+                ],
+                'min' => [
+                    'wrapper' => function ($e) {
+                        return intval($e);
+                    },
+                    'default' => false
+                ],
+                'max' => [
+                    'wrapper' => function ($e) {
+                        return intval($e);
+                    },
+                    'default' => false
+                ]
+            );
+
+            foreach ($fluids as $key => $value) {
+                $this->fluids[$key] = (object)array();
+
+                if (!is_array($value) and !in_array($value, $this->data_types)) {
+                    throw new ErrorException("Invalid data type: $value");
+                } elseif (is_array($value) and !key_exists("type", $value)) {
+                    throw new ErrorException("The obligatory parameter type was not passed in $key");
+                } elseif (is_array($value) and key_exists("type", $value) and !in_array($value["type"], $this->data_types)) {
+                    throw new ErrorException("Invalid data type: $value");
+                }
+
+                if (is_array($value)) {
+                    foreach ($value as $item => $v) {
+                        if (isset($this->filter[$item])) {
+                            $this->fluids[$key]->{$item} = $this->filter[$item]['wrapper']($v);
+                            if (is_array($value) and isset($this->filter[$item]['$not']) and is_array($this->filter[$item]['$not'])) {
+                                foreach (array_diff($this->filter[$item]['$not'], $value) as $e) {
+                                    if (isset($value[$e])) {
+                                        throw new ErrorException("Type {$e} cannot be used with type {$item}");
+                                    }
+                                }
+                            }
+                            if (isset($this->fluids[$key]->type) and !in_array($this->fluids[$key]->type, $this->fluids_without_size)) {
+                                $this->fluids[$key]->size = empty($this->fluids[$key]->size) == false ? $this->filter['size']['wrapper']($this->fluids[$key]->size) : 255;
+                            } else {
+                                $this->fluids[$key]->size = false;
+                            }
+                        } else {
+                            throw new ErrorException("Type {$item} does not support");
+                        }
+
+                    }
+                }
+
+                if (isset($value["type"])) {
+                    if (in_array($value["type"], $this->fluids_without_size) and key_exists("size", $value) and $value['size'] != false) {
+                        throw new ErrorException("Data type {$value["type"]} does not support size");
+                    }
+                }
+
+            }
+        }
+
+        /**
+         * Get a list of all fields in the database
+         *
+         * @return array List of all database fields
+         */
+        public function get_keys()
+        {
+            return array_keys($this->fluids);
+        }
+
+        /**
+         * Get all the fields in the schematic
+         *
+         * @return array Scheme
+         */
+        public function get_fluids()
+        {
+            return $this->fluids;
+        }
+
+        /**
+         * Get the default value for a field in the schema by its key
+         *
+         * @param string $fluid Field in the scheme
+         * @return string=
+         *
+         */
+        public function get_default(string $fluid)
+        {
+            if (is_array($this->fluids) and isset($schema->{$fluid}) and isset($schema->{$fluid}->default)) {
+                return $schema->{$fluid}->default;
+            }
+
+            return \phpgoose\Schema::NOT_DEFINED;
+        }
+
+        /**
+         * Get fluid type by its key
+         *
+         * @noinspection PhpUnused
+         * @param string $fluid Field in the scheme
+         * @return string Get the type
+         */
+        public function get_type(string $fluid)
+        {
+            if (is_array($this->fluids) and isset($schema->{$fluid}) and isset($schema->{$fluid}->type)) {
+                return $schema->{$fluid}->type;
+            }
+
+            return false;
+        }
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function __get(string $name)
+        {
+            return $this->fluids[$name];
+        }
+
+        /**
+         * @param string $name
+         * @param $value
+         */
+        public function __set(string $name, $value)
+        {
+            $this->fluids[$name] = $value;
+        }
+
+        /**
+         * @param string $name
+         * @return bool
+         */
+        public function __isset(string $name)
+        {
+            return isset($this->fluids[$name]);
+        }
+
+        /**
+         * @return array
+         */
+        public function __debugInfo()
+        {
+            return $this->fluids;
+        }
+
+        /**
+         * @return array
+         */
+        public function __serialize(): array
+        {
+            return array(
+                'fluids' => $this->fluids,
+                'data_types' => $this->data_types
+            );
+        }
+
+        /**
+         * @param string $name
+         */
+        public function __unset(string $name)
+        {
+            unset($this->fluids[$name]);
+        }
+
+        /**
+         * @return false|string
+         */
+        public function __toString()
+        {
+            return json_encode($this->fluids);
+        }
+
+        /**
+         * @return $this
+         */
+        public function __clone()
+        {
+            return $this;
+        }
+
+        /**
+         * @param array $data
+         */
+        public function __unserialize(array $data)
+        {
+            $this->fluids = $data['fluids'];
+            $this->data_types = $data['data_types'];
+        }
+
+    }
+
+
+    /**
+     * Creates a model by implementing a schema for a specific table
+     * @package phpgoose
+     */
+    class Model extends Operator
+    {
+
+        /**
+         * Template for formatting an select SQL query in the find function
+         */
+        CONST SQL_TEMPLATE_FIND = 'SELECT $select $pipe FROM $name $where $limit $offset $order $sort $group_by;';
+
+        /**
+         * Template for formatting an delete SQL query in the find function
+         */
+        CONST SQL_TEMPLATE_DELETE = 'DELETE FROM $name $where $limit $offset $order $sort;';
+
+        /**
+         * Template for formatting an update SQL query in the find function
+         */
+        CONST SQL_TEMPLATE_UPDATE = 'UPDATE $name $pipe SET $update $where $limit $offset $order $sort;';
+
+        /**
+         * Template for formatting an update SQL query in the find function
+         */
+        CONST SQL_TEMPLATE_DROP_DATABASE = 'DROP DATABASE $if_exists $if_not_exists $name;';
+
+        /**
+         * Template for formatting an drop SQL query in the find function
+         */
+        CONST SQL_TEMPLATE_DROP_TABLE = 'DROP TABLE $if_exists $if_not_exists $name;';
+
+        /**
+         * Template for formatting an count SQL query in the find function
+         */
+        CONST SQL_TEMPLATE_COUNT = 'SELECT COUNT($select) FROM $name $where $limit $offset $order $sort;';
+
+        private $schema = false;
+        private $name = false;
+        private $limit = false;
+        private $order = false;
+        private $sort = false;
+        private $select = false;
+        private $filter = [];
+        private $group_by = false;
+        private $pipes = [];
+        private $pipes_aliases = [];
+        private $offset = false;
+        private $reverse = false;
+        private $if_exists = false;
+        private $if_not_exists = false;
+        private $sql_query = false;
+
+        /**
+         * WHILE object parser class variable in SQL query
+         * @var bool|ParserWhile
+         */
+        private $parser_while = false;
+
+        /**
+         * Rich operator parser class variable in an SQL query
+         * @var bool|ParserOperators
+         */
+        private $parser_operators = false;
+
+        /**
+         * Parser class variable of the SELECT parameter in an SQL query
+         * @var bool|ParserSelect
+         */
+        private $parser_select = false;
+
+        /**
+         * Parser class variable of the UPDATE parameter in the SQL query
+         * @var bool|ParserUpdate
+         */
+        private $parser_update = false;
+
+        /**
+         * Creates a model by implementing a schema for a specific table
+         *
+         * @param string $name Name of the table in which the scheme will be implemented
+         * @param Schema $schema Table schema
+         * @throws ErrorException
+         * @throws \phpgoose\SQLException
+         * @throws Exception
+         * @throws Exception
+         * @author masloff (irtex)
+         * @copyright 2021 iRTEX
+         */
+        public function __construct(string $name, Schema $schema)
+        {
+            parent::__construct();
+
+            global $phpsqlgoose_connection;
+
+            if ($phpsqlgoose_connection instanceof \phpgoose\Connection) {
+
+                if ($schema instanceof Schema) {
+                    $this->schema = $schema;
+                    $this->name = sanitize_name($name);
+                    $this->parser_operators = new ParserOperators();
+                    $this->parser_while = new ParserWhile();
+                    $this->parser_select = new ParserSelect();
+                    $this->parser_update = new ParserUpdate();
+
+                    $this->sql_query = "CREATE TABLE IF NOT EXISTS `{$this->name}` (";
+                    $query_list = array();
+
+                    foreach ($schema->get_fluids() as $key => $value) {
+                        switch ($value->type) {
+                            case 'int':
+                                $type = 'SMALLINT';
+                                break;
+                            case 'url':
+                            case 'password':
+                            case 'string':
+                            case 'any':
+                                $type = 'VARCHAR';
+                                break;
+                            case 'boolean':
+                                $type = 'BIT';
+                                break;
+                            default:
+                                $type = strtoupper($value->type);
+                        }
+
+                        array_push($query_list, bind('$constraint $key $type $size $null $primary $auto_increment $default', array(
+                            '$key' => $key,
+                            '$constraint' => [
+                                'value' => isset($value->constraint) ? (boolval($value->constraint) == true ? "CONSTRAINT" : '') : '',
+                                'escape' => false
+                            ],
+                            '$type' => [
+                                'value' => $type,
+                                'escape' => false
+                            ],
+                            '$size' => [
+                                'value' => isset($value->size) ? (empty($value->size) == false ? "({$value->size})" : '') : '',
+                                'escape' => false
+                            ],
+                            '$null' => [
+                                'value' =>
+                                    isset($value->not_null)
+                                        ? (
+                                    (boolval($value->not_null) == true
+                                        ? "NOT NULL"
+                                        : (isset($value->null)
+                                            ? (boolval($value->null) == true ? "NULL" : '')
+                                            : ''))
+                                    )
+                                        : (isset($value->null)
+                                        ? (boolval($value->null) == true ? "NULL" : '')
+                                        : ''),
+                                'escape' => false
+                            ],
+                            '$primary' => [
+                                'value' =>
+                                    isset($value->primary)
+                                        ? (boolval($value->primary) == true
+                                        ? "PRIMARY KEY"
+                                        : (isset($value->unique)
+                                            ? (boolval($value->unique) == true
+                                                ? "UNIQUE KEY"
+                                                : '')
+                                            : ''))
+                                        : (isset($value->unique)
+                                        ? (boolval($value->unique) == true
+                                            ? "UNIQUE KEY"
+                                            : '')
+                                        : ''),
+
+                                'escape' => false
+                            ],
+                            '$default' => [
+                                'value' => isset($value->default) ? (empty($value->default) == false ? "DEFAULT " . $this->input_value_to_database($schema, $key, $value->default) : '') : '',
+                                'escape' => false
+                            ],
+                            '$auto_increment' => [
+                                'value' => isset($value->auto_increment) ? (boolval($value->auto_increment) == true ? "AUTO_INCREMENT" : '') : '',
+                                'escape' => false
+                            ],
+                            '$comment' => [
+                                'value' => isset($value->comment) ? (empty($value->comment) == false ? "COMMENT " . $this->input_value_to_database($schema, $key, $value->comment, false) : '') : '',
+                                'escape' => false
+                            ],
+
+                        )));
+                    }
+
+                    $this->sql_query .= implode(",", $query_list);
+                    $this->sql_query .= ")";
+
+                    $this->execute_query($this->sql_query);
+
+                } else {
+                    throw new ErrorException("The data for the model is of the wrong type");
+                }
+
             } else {
-                throw new ErrorException("Provider not specified ");
+                throw new ErrorException("Before you create a model, establish a connection to the database with the Connection class");
             }
 
-            if ($this->db_selected == false) {
-                if ($this->provider == Connection::PROVIDER_MYSQL) {
-                    mysql_query($query, $phpgoose_connection->get_connection());
+        }
 
-                } elseif ($this->provider == Connection::PROVIDER_MYSQLI) {
-                    if (!$this->connection->query($query, MYSQLI_USE_RESULT)) {
-                        throw new SQLException(mysqli_error($this->connection));
+        /**
+         * Returns a single record that satisfies the given query criteria on the collection. If the query satisfies multiple documents, this method returns the last document according to the natural order. If no documents satisfy the query, the method returns null.
+         *
+         * @noinspection PhpUnused
+         * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
+         * @return null|object SQL records
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function find_one(array $query = [])
+        {
+            $results = $this->limit(1)->find_many($query);
+
+            if ($results) {
+                return (object)end($results);
+            } else {
+                return null;
+            }
+        }
+
+        /**
+         * Selects records in a collection or view and returns a array selected records.
+         *
+         * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
+         * @return array SQL records
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function find_many(array $query = [])
+        {
+            $this->sql_query = bind(self::SQL_TEMPLATE_FIND, array(
+                '$name' => $this->name,
+                '$pipe' => [
+                    'value' => empty($this->pipes) ? "" : ", " . implode(", ", $this->pipes),
+                    'escape' => false
+                ],
+                '$offset' => $this->offset ? "OFFSET {$this->offset}" : '',
+                '$select' => [
+                    'value' => $this->parser_select->parse_select($this->schema, $this->select),
+                    'escape' => false
+                ],
+                '$where' => [
+                    'value' => empty($query) ? "" : "WHERE " . $this->parser_while->parse_while($this->schema, $query),
+                    'escape' => false
+                ],
+                '$order' => [
+                    'value' => $this->order ? "ORDER BY {$this->order}" : "",
+                    'escape' => false
+                ],
+                '$sort' => [
+                    'value' => $this->sort ? strtoupper($this->sort) : "",
+                    'escape' => false
+                ],
+                '$limit' => [
+                    'value' => is_numeric($this->limit) ? "LIMIT {$this->limit}" : "",
+                    'escape' => false
+                ],
+                '$group_by' => [
+                    'value' => $this->group_by ? "GROUP BY {$this->group_by}" : "",
+                    'escape' => false
+                ]
+            ));
+
+            return $this->execute_query($this->sql_query);
+        }
+
+        /**
+         * Insert SQL record into the table
+         *
+         * @noinspection PhpUnused
+         * @param array $data SQL query as an array
+         * @return boolean Status
+         * @throws ErrorException
+         * @throws SQLException
+         * @throws Exception
+         */
+        public function insert_one(array $data)
+        {
+            # Checks if a hook is present and if so, applies it to the parameters
+            if ($this->exists_hook("insert")) {
+                $data = $this->run_hook("insert", $data);
+            }
+
+            foreach (array_diff($this->schema->get_keys(), array_keys($data)) as $key) {
+                if ($this->schema->get_default($key) === Schema::NOT_DEFINED) {
+                    if (!(isset($this->schema->{$key}->auto_increment) and $this->schema->{$key}->auto_increment == true)) {
+                        throw new ErrorException("The key $key does not contain a default value and is not passed to the function when the record is created");
+                    }
+                } else {
+                    $data[$key] = $this->schema->get_default($key);
+                }
+            }
+
+            foreach ($data as $key => $value) {
+                if ($data[$key] == '') {
+                    throw new ErrorException("Key $key is empty");
+                }
+
+                if ($this->exists_hook("insert:$key")) {
+                    $value = $this->run_hook("pre_insert_one:$key", $value);
+                }
+
+                $data[$key] = $this->input_value_to_database($this->schema, $key, $value);
+            }
+
+            $keys = implode(", ", array_map(function ($e) {
+                return sql_escape_string($e);
+            }, array_keys($data)));
+
+            $values = implode(", ", array_values($data));
+
+            $this->sql_query = bind('INSERT INTO $name ($keys) VALUES ($values);', array(
+                '$name' => $this->name,
+                '$keys' => $keys,
+                '$values' => [
+                    'value' => $values,
+                    'escape' => false
+                ]
+            ));
+
+            return $this->execute_query($this->sql_query);
+        }
+
+        /**
+         * Data for inserting a plural object into the database must be of the array type
+         *
+         * @noinspection PhpUnused
+         * @param array $data SQL records
+         * @return array
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function insert_many(array $data)
+        {
+            $records = [];
+
+            foreach ($data as $record) {
+                if (is_array($record)) {
+                    array_push($records, $this->insert_one($record));
+                } else {
+                    throw new ErrorException('Insert parameter is not an assoc array');
+                }
+            }
+
+            return $records;
+        }
+
+        /**
+         * Removes a single record from a collection.
+         *
+         * @noinspection PhpUnused
+         * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
+         * @return bool SQL records
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function delete_one(array $query)
+        {
+            return $this->limit(1)->delete_many($query);
+        }
+
+        /**
+         * Removes all records that match the filter from a collection.
+         *
+         * @noinspection PhpUnused
+         * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
+         * @return boolean Status
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function delete_many(array $query = [])
+        {
+            # Checks if a hook is present and if so, applies it to the parameters
+            if ($this->exists_hook("delete")) {
+                $query = $this->run_hook("delete", $query);
+            }
+
+            # Forms an SQL query
+            $this->sql_query = bind(self::SQL_TEMPLATE_DELETE, array(
+                '$name' => $this->name,
+                '$offset' => $this->offset ? "OFFSET {$this->offset}" : '',
+                '$where' => [
+                    'value' => empty($query) ? "" : "WHERE " . $this->parser_while->parse_while($this->schema, $query),
+                    'escape' => false
+                ],
+                '$order' => [
+                    'value' => $this->order ? "ORDER BY {$this->order}" : "",
+                    'escape' => false
+                ],
+                '$sort' => [
+                    'value' => $this->sort ? strtoupper($this->sort) : "",
+                    'escape' => false
+                ],
+                '$limit' => [
+                    'value' => is_numeric($this->limit) ? "LIMIT {$this->limit}" : "",
+                    'escape' => false
+                ]
+            ));
+
+            $this->execute_query($this->sql_query);
+
+            return $this->sql_has_no_error();
+        }
+
+        /**
+         * Updates a single record within the collection based on the filter.
+         *
+         * @noinspection PhpUnused
+         * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
+         * @param array $update_data The modifications to apply.
+         * @return array|bool|ErrorException SQL records
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function update_one(array $query = [], array $update_data = [])
+        {
+            return $this->limit(1)->update_many($query, $update_data);
+        }
+
+        /**
+         * Changes an existing record or records in the collection.
+         * The method can change specific fields of an existing record or records or
+         * completely replace an existing record, depending on the update parameter.
+         *
+         * @noinspection PhpUnused
+         * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
+         * @param array $update_data The modifications to apply.
+         * @return boolean Status
+         * @throws ErrorException
+         * @throws SQLException
+         * @throws Exception
+         */
+        public function update_many(array $query = [], array $update_data = [])
+        {
+
+            # Checks if a hook is present and if so, applies it to the parameters
+            if ($this->exists_hook("update")) {
+                $update_data = $this->run_hook("update", $update_data);
+            }
+
+            # Forms an SQL query
+
+            $this->sql_query = bind(self::SQL_TEMPLATE_UPDATE, array(
+                '$name' => $this->name,
+                '$update' => [
+                    'value' => empty($update_data) ? "" : $this->parser_update->parse_update($this->schema, $update_data),
+                    'escape' => false
+                ],
+                '$pipe' => [
+                    'value' => empty($this->pipes) ? "" : ", " . implode(", ", $this->pipes),
+                    'escape' => false
+                ],
+                '$select' => $this->select ? $this->select : '*',
+                '$offset' => $this->offset ? "OFFSET {$this->offset}" : '',
+                '$where' => [
+                    'value' => empty($query) ? "" : "WHERE " . $this->parser_while->parse_while($this->schema, $query),
+                    'escape' => false
+                ],
+                '$order' => [
+                    'value' => $this->order ? "ORDER BY {$this->order}" : "",
+                    'escape' => false
+                ],
+                '$sort' => [
+                    'value' => $this->sort ? strtoupper($this->sort) : "",
+                    'escape' => false
+                ],
+                '$limit' => [
+                    'value' => is_numeric($this->limit) ? "LIMIT {$this->limit}" : "",
+                    'escape' => false
+                ]
+            ));
+
+            $this->execute_query($this->sql_query);
+
+            return $this->sql_has_no_error();
+
+        }
+
+        /**
+         * Removes database.
+         *
+         * @noinspection PhpUnused
+         * @return boolean Status
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function drop_database()
+        {
+
+            # Forms an SQL query
+            $this->sql_query = bind(self::SQL_TEMPLATE_DROP_DATABASE, array(
+                '$name' => $this->name,
+                '$if_exists' => [
+                    'value' => $this->if_exists ? "IF EXISTS" : '',
+                    'escape' => false
+                ],
+                '$if_not_exists' => [
+                    'value' => $this->if_not_exists ? "IF NOT EXISTS" : '',
+                    'escape' => false
+                ],
+            ));
+
+            $this->execute_query($this->sql_query);
+
+            return $this->sql_has_no_error();
+
+        }
+
+        /**
+         * Removes a table from the database.
+         *
+         * @noinspection PhpUnused
+         * @return boolean Status
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function drop_table()
+        {
+
+            # Forms an SQL query
+            $this->sql_query = bind(self::SQL_TEMPLATE_DROP_TABLE, array(
+                '$name' => $this->name,
+                '$if_exists' => [
+                    'value' => $this->if_exists ? "IF EXISTS" : '',
+                    'escape' => false
+                ],
+                '$if_not_exists' => [
+                    'value' => $this->if_not_exists ? "IF NOT EXISTS" : '',
+                    'escape' => false
+                ],
+            ));
+
+            $this->execute_query($this->sql_query);
+
+            return $this->sql_has_no_error();
+
+        }
+
+        /**
+         * Returns the number of records that match the find_many() query for the collection.
+         * The count() method does not perform the find_many() operation,
+         * but instead counts and returns the number of results that match the query.
+         *
+         * @noinspection PhpUnused
+         * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
+         * @return int|null Count orders
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function count(array $query = [])
+        {
+
+            # Checks if a hook is present and if so, applies it to the parameters
+            if ($this->exists_hook("count")) {
+                $query = $this->run_hook("count", $query);
+            }
+
+            # Forms an SQL query
+            $this->sql_query = bind(self::SQL_TEMPLATE_COUNT, array(
+                '$name' => $this->name,
+                '$offset' => $this->offset ? "OFFSET {$this->offset}" : '',
+                '$select' => $this->select ? $this->select : '*',
+                '$where' => [
+                    'value' => empty($query) ? "" : "WHERE " . $this->parser_while->parse_while($this->schema, $query),
+                    'escape' => false
+                ],
+                '$order' => [
+                    'value' => $this->order ? "ORDER BY {$this->order}" : "",
+                    'escape' => false
+                ],
+                '$sort' => [
+                    'value' => $this->sort ? strtoupper($this->sort) : "",
+                    'escape' => false
+                ],
+                '$limit' => [
+                    'value' => is_numeric($this->limit) ? "LIMIT {$this->limit}" : "",
+                    'escape' => false
+                ]
+            ));
+
+            $data = $this->execute_query($this->sql_query);
+
+            if (is_array($data)) {
+                return intval(end($data));
+            } else {
+                return null;
+            }
+        }
+
+        /**
+         * @param string $query
+         * @return array|bool
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        private function execute_query(string $query)
+        {
+
+            # Checks if a hook is present and if so, applies it to the parameters
+            if ($this->exists_hook("__SQL__")) {
+                $query = $this->run_hook("__SQL__", $query);
+            }
+
+            global $phpsqlgoose_connection;
+
+            $data = array();
+
+            if ($this->offset and !$this->limit) {
+                throw new ErrorException("The offset parameter cannot be used without the limit parameter");
+            }
+
+            if (!($phpsqlgoose_connection instanceof Connection)) {
+                throw new ErrorException("No connection to the database established");
+            }
+
+            $this->sql_query = $query;
+
+            $results = mysqli_query($phpsqlgoose_connection->get_connection(), $query);
+
+            if (mysqli_error($phpsqlgoose_connection->get_connection())) {
+                throw new SQLException(mysqli_error($phpsqlgoose_connection->get_connection()));
+            }
+
+            if (
+                $results === true or
+                $results === false
+            ) {
+                return $results;
+            }
+
+            if ($results instanceof mysqli_result) {
+                while ($row = mysqli_fetch_assoc($results)) {
+                    try {
+                        array_push($data, $this->output_rows_from_database($this->schema, (array) $row, (array) $this->filter));
+                    } catch (Exception $e) {
+                        array_push($data, []);
                     }
                 }
             }
+
+            if ($this->reverse) {
+                $data = array_reverse($data);
+            }
+
+            return $data;
+
         }
-    }
 
 
-    /**
-     * Get a direct link to the SQL connection
-     *
-     * @return mysqli|false Direct connection to mysql
-     * @copyright 2021 iRTEX
-     *
-     * @author masloff (irtex)
-     */
-    public function get_connection()
-    {
-        return $this->connection;
-    }
-
-
-    /**
-     * Get the name of the connection provider
-     *
-     * @return string Provider name in lowercase
-     * @copyright 2021 iRTEX
-     *
-     * @author masloff (irtex)
-     */
-    public function get_provider()
-    {
-        return $this->provider;
-    }
-
-    /**
-     * @return array|false
-     */
-    public function __debugInfo()
-    {
-        if ($this->connection instanceof mysqli) {
-            return $this->connection->get_connection_stats();
+        /**
+         * When you create an SQL record via the invoke method,
+         * the function will handle errors and return False instead of the standard PHP errors.
+         * If you need to handle errors manually use the insert method
+         *
+         * @noinspection PhpUnused
+         * @param $data
+         * @return \phpgoose\Model|bool
+         * @throws Exception
+         */
+        public function __invoke($data)
+        {
+            try {
+                return $this->insert_one($data);
+            } catch (ErrorException $e) {
+                return false;
+            } catch (SQLException $e) {
+                return false;
+            }
         }
-    }
 
-    /**
-     * @return array
-     */
-    public function __serialize(): array
-    {
-        return array(
-            'db' => $this->db,
-            'host' => $this->host,
-            'username' => $this->username,
-            'password' => $this->password,
-            'port' => $this->port,
-            'charset' => $this->charset
-        );
-    }
+        /**
+         * Rename the column
+         *
+         * @noinspection PhpUnused
+         * @param string $column_name
+         * @param string $new_column_name
+         * @return bool|mixed
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function rename_column(string $column_name, string $new_column_name)
+        {
+            $data_type = $this->get_column_type($column_name);
 
-    /**
-     * @param array $data
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function __unserialize(array $data)
-    {
-        $this->charset = strval($data['charset']);
-        $this->db = sanitize_name($data['db']);
-        $this->host = strval($data['host']);
-        $this->username = strval($data['username']);
-        $this->password = strval($data['password']);
+            if ($data_type) {
 
-        $this->__construct($this->host, $this->username, $this->password, $this->db, $this->port, $this->charset);
+                $this->sql_query = bind('ALTER TABLE $name CHANGE COLUMN $column_name $new_column_name $data_type;', array(
+                    '$name' => $this->name,
+                    '$column_name' => $column_name,
+                    '$new_column_name' => $new_column_name,
+                    '$data_type' => $data_type
+                ));
+
+                return $this->execute_query($this->sql_query);
+
+            } else {
+                return false;
+            }
+
+        }
+
+        /**
+         * Get data type from MySQL
+         *
+         * @noinspection PhpUnused
+         * @param string $column_name
+         * @return bool|mixed
+         * @throws ErrorException
+         * @throws SQLException
+         */
+        public function get_column_type(string $column_name)
+        {
+
+            $this->sql_query = bind('SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE table_name = \'$name\' AND COLUMN_NAME = \'$column_name\'', array(
+                '$name' => $this->name,
+                '$column_name' => $column_name,
+            ));
+
+            $data = $this->execute_query($this->sql_query);
+
+            if (is_array($data)) {
+                return array_values(end($data))[0];
+            } else {
+                return false;
+            }
+
+        }
+
+        /**
+         * Limits the number of records passed to the next stage in the pipeline.
+         *
+         * @noinspection PhpUnused
+         * @param int $limit
+         * @return $this
+         */
+        public function limit(int $limit)
+        {
+            $this->limit = intval($limit);
+            return $this;
+        }
+
+        /**
+         * Selects a subset of an array to return based on the specified condition.
+         * Returns an array with only those elements that match the condition. The returned elements are in the original order.
+         *
+         * @noinspection PhpUnused
+         * @param string|array $select
+         * @return $this
+         * @throws ErrorException
+         */
+        public function select($select)
+        {
+            if (is_array($select) or is_object($select)) {
+                foreach ($select as $key) {
+                    if (!isset($this->schema->{$key})) {
+                        throw new ErrorException("Key $key not found in schema");
+                    }
+                }
+                $this->select = implode(", ", $select);
+            } else {
+                if (!isset($this->schema->{$select}) and !$select == '*') {
+                    throw new ErrorException("Key $select not found in schema");
+                }
+
+                $this->select = (string)$select;
+            }
+
+            return $this;
+        }
+
+        /**
+         *
+         * @noinspection PhpUnused
+         * @param $filter
+         * @return $this
+         * @throws ErrorException
+         */
+        public function filter_by($filter)
+        {
+            if (is_array($filter) or is_object($filter)) {
+                foreach ($filter as $key) {
+                    if (!isset($this->schema->{$key}) and !in_array($key, $this->pipes_aliases)) {
+                        throw new ErrorException("Key $key not found in schema");
+                    }
+                }
+                $this->filter = (array) $filter;
+            } else {
+                if (!isset($this->schema->{$filter}) and !$filter == '*' and !in_array($filter, $this->pipes_aliases)) {
+                    throw new ErrorException("Key $filter not found in schema");
+                }
+
+                $this->filter = (string)$filter;
+            }
+
+            return $this;
+        }
+
+        /**
+         * The group by clause is used in a SELECT statement to collect data across multiple records and group the results by one or more columns.
+         *
+         * @noinspection PhpUnused
+         * @param string $group
+         * @return $this
+         * @throws ErrorException
+         */
+        public function group_by(string $group)
+        {
+            if (is_array($group) or is_object($group)) {
+                foreach ($group as $key) {
+                    if (!isset($this->schema->{$key})) {
+                        throw new ErrorException("Key $key not found in schema");
+                    }
+                }
+                $this->group_by = implode(", ", $group);
+            } else {
+                if (!isset($this->schema->{$group})) {
+                    throw new ErrorException("Key $group not found in schema");
+                }
+
+                $this->group_by = (string) $group;
+            }
+
+            return $this;
+        }
+
+        /**
+         * @noinspection PhpUnused
+         * @param string $by
+         * @return $this
+         */
+        public function order(string $by)
+        {
+            $this->order = $by;
+            return $this;
+        }
+
+        /**
+         *
+         * @noinspection PhpUnused
+         * @param bool $reverse
+         * @return $this
+         */
+        public function reverse(bool $reverse = true)
+        {
+            $this->reverse = $reverse;
+            return $this;
+        }
+
+        /**
+         * Sorts all input records and returns them to the pipeline in sorted order.
+         *
+         * @noinspection PhpUnused
+         * @param string $sort
+         * @return $this
+         * @throws ErrorException
+         */
+        public function sort(string $sort)
+        {
+            switch ($sort) {
+                case 'Z...A':
+                case '9-0':
+                case 'DESC':
+                    $this->sort = 'DESC';
+                    break;
+                case 'A...Z':
+                case '0-9':
+                case 'ASC':
+                    $this->sort = 'ASC';
+                    break;
+                default:
+                    throw new ErrorException("Wrong sorting type");
+            }
+
+            return $this;
+        }
+
+        /**
+         * Skips over the specified number of records pass into the stage and passes the remaining documents to the next stage in the pipeline.
+         *
+         * @noinspection PhpUnused
+         * @param int $offset
+         * @return $this
+         */
+        public function offset(int $offset)
+        {
+            $this->offset = intval($offset);
+            return $this;
+        }
+
+        /**
+         * EXISTS is a logical MySQL statement that accepts and processes a nested SQL query (SELECT) in order to check the existence of strings
+         *
+         * @noinspection PhpUnused
+         * @param bool $boolean
+         * @return $this
+         * @throws Exception
+         */
+        public function if_exists(bool $boolean = true)
+        {
+            if ( $this->if_not_exists === true) {
+                throw new Exception("The 'if_not_exists' parameter is already set.");
+            }
+
+            $this->if_exists = $boolean;
+            return $this;
+        }
+
+        /**
+         * EXISTS is a logical MySQL statement that accepts and processes a nested SQL query (SELECT) in order to check the existence of strings
+         *
+         * @noinspection PhpUnused
+         * @param bool $boolean
+         * @return $this
+         * @throws Exception
+         */
+        public function if_not_exists(bool $boolean = true)
+        {
+            if ( $this->if_exists === true) {
+                throw new Exception("The 'if_exists' parameter is already set.");
+            }
+
+            $this->if_not_exists = $boolean;
+            return $this;
+        }
+
+        /**
+         * Calls the action registered by the on function
+         *
+         * @noinspection PhpUnused
+         * @return bool|string
+         */
+        public function get_sql_query()
+        {
+            return $this->sql_query;
+        }
+
+        /**
+         * Checks if the last request has an error
+         *
+         * @noinspection PhpUnused
+         * @return bool
+         * @throws ErrorException
+         */
+        private function sql_has_no_error()
+        {
+            global $phpsqlgoose_connection;
+
+            if ($this->offset and !$this->limit) {
+                throw new ErrorException("The offset parameter cannot be used without the limit parameter");
+            }
+
+            if (!($phpsqlgoose_connection instanceof Connection)) {
+                throw new ErrorException("No connection to the database established");
+            }
+
+            return empty(mysqli_error($phpsqlgoose_connection->get_connection()));
+        }
+
+        /**
+         * FORMULAS FOR PIP FUNCTIONS ARE NOT SAFE, SCREEN QUERIES WITHIN FORMULAS YOURSELF
+         *
+         * @noinspection PhpUnused
+         * @param $alias
+         * @param $expression
+         * @return $this
+         * @throws Exception
+         */
+        public function pipe($alias, $expression)
+        {
+            array_push($this->pipes_aliases, $alias);
+            $alias = $this->input_value_to_database($this->schema, '~hidden', $alias);
+            array_push($this->pipes, "$expression AS $alias");
+            return $this;
+        }
     }
 
 }
 
-/**
- * Data schema for creating the phpgoose model. It is used to declare fields in a table and their configurations: field type, default value, uniqueness, etc.
- * @package phpgoose
- */
-class Schema
-{
-
-    const NOT_DEFINED = 'not-defined';
-
-    private $fluids = array();
-    private $data_types = [
-        TYPE_VARBINARY,
-        TYPE_BLOB,
-        TYPE_MEDIUMBLOB,
-        TYPE_POINT,
-        TYPE_LINESTRING,
-        TYPE_POLYGON,
-        TYPE_GEOMETRY,
-        TYPE_BINARY,
-        TYPE_LONGTEXT,
-        TYPE_MEDIUMTEXT,
-        TYPE_STRING,
-        TYPE_CHAR,
-        TYPE_INT,
-        TYPE_BIGINT,
-        TYPE_SMALLINT,
-        TYPE_BOOLEAN,
-        TYPE_TIME,
-        TYPE_DATE,
-        TYPE_ANY,
-        TYPE_DOUBLE,
-        TYPE_TEXT,
-        TYPE_VARCHAR,
-        TYPE_PASSWORD,
-        TYPE_URL,
-        TYPE_OBJECT,
-        TYPE_DATETIME,
-        TYPE_TIMESTAMP
-    ];
+namespace phpsqlgoose\Builder {
 
     /**
-     * Data schema for creating the phpgoose model. It is used to declare fields in a table and their configurations: field type, default value, uniqueness, etc.
-     *
-     * @param array $fluids An array of database table fields
-     * @throws ErrorException
-     * @copyright 2021 iRTEX
-     * @author masloff (irtex)
+     * Class Fluid
+     * @noinspection PhpUnused
+     * @package phpgoose
+     * @method Fluid type(string $type) The AVG function returns the average value of an expression.
+     * @method Fluid size(number $size) The AVG function returns the average value of an expression.
+     * @method Fluid constraint(bool $constraint) The AVG function returns the average value of an expression.
+     * @method Fluid primary(bool $primary) The AVG function returns the average value of an expression.
+     * @method Fluid unique(bool $unique) The AVG function returns the average value of an expression.
+     * @method Fluid default(bool $default) The AVG function returns the average value of an expression.
+     * @method Fluid null(bool $null) The AVG function returns the average value of an expression.
+     * @method Fluid not_null(bool $not_null) The AVG function returns the average value of an expression.
+     * @method Fluid auto_increment(bool $auto_increment) The AVG function returns the average value of an expression.
+     * @method Fluid comment(string $comment) The AVG function returns the average value of an expression.
+     * @method Fluid regex(string $regex) The AVG function returns the average value of an expression.
+     * @method Fluid min(string $min) The AVG function returns the average value of an expression.
+     * @method Fluid max(string $max) The AVG function returns the average value of an expression.
      */
-    public function __construct(array $fluids)
+    class Fluid
     {
-        if (version_compare(PHP_VERSION, '4.3.0') < 0) {
-            $PHP_VERSION = PHP_VERSION;
-            throw new ErrorException("You are using too old version of PHP ($PHP_VERSION). Version 4.3.0 is required.");
+        private $fluid = array();
+
+        /**
+         * is triggered when invoking inaccessible methods in an object context.
+         *
+         * @param $name string
+         * @param $arguments array
+         * @return mixed
+         * @link https://php.net/manual/en/language.oop5.overloading.php#language.oop5.overloading.methods
+         */
+        public function __call($name, $arguments)
+        {
+            $this->fluid[$name] = $arguments[0];
+            return $this;
         }
 
-        foreach ($fluids as $key => $value) {
-            $no_size_types = [
-                TYPE_BOOLEAN,
-                TYPE_TIME,
-                TYPE_DATE,
-                TYPE_OBJECT,
-                TYPE_DATETIME,
-                TYPE_TIMESTAMP
-            ];
+        /**
+         * is utilized for reading data from inaccessible members.
+         *
+         * @param $name string
+         * @return mixed
+         * @link https://php.net/manual/en/language.oop5.overloading.php#language.oop5.overloading.members
+         */
+        public function __get($name)
+        {
+            return $this->fluid[$name];
+        }
 
-            if (!is_array($value) and !in_array($value, $this->data_types)) {
-                throw new ErrorException("Invalid data type: $value");
-            } elseif (is_array($value) and !key_exists("type", $value)) {
-                throw new ErrorException("The obligatory parameter type was not passed in $key");
-            } elseif (is_array($value) and key_exists("type", $value) and !in_array($value["type"], $this->data_types)) {
-                throw new ErrorException("Invalid data type: $value");
+        /**
+         * run when writing data to inaccessible members.
+         *
+         * @param $name string
+         * @param $value mixed
+         * @return void
+         * @link https://php.net/manual/en/language.oop5.overloading.php#language.oop5.overloading.members
+         */
+        public function __set($name, $value)
+        {
+            $this->fluid[$name] = $value;
+        }
+
+        /**
+         * is triggered by calling isset() or empty() on inaccessible members.
+         *
+         * @param $name string
+         * @return bool
+         * @link https://php.net/manual/en/language.oop5.overloading.php#language.oop5.overloading.members
+         */
+        public function __isset($name)
+        {
+            return isset($this->fluid[$name]);
+        }
+
+        /**
+         * is invoked when unset() is used on inaccessible members.
+         *
+         * @param $name string
+         * @return void
+         * @link https://php.net/manual/en/language.oop5.overloading.php#language.oop5.overloading.members
+         */
+        public function __unset($name)
+        {
+            unset($this->fluid[$name]);
+        }
+
+        /**
+         * @return array
+         */
+        public function to_array(): array
+        {
+            return $this->fluid;
+        }
+    }
+
+}
+
+namespace phpsqlgoose\Engine\Hook {
+
+    /**
+     * Class Hook
+     * @package Engine\Hook
+     */
+    class Hook {
+        /**
+         * @var array
+         */
+        protected $callbacks;
+
+        /**
+         * Hook constructor.
+         * @param array $callbacks
+         */
+        public function __construct($callbacks = []) {
+            $this->callbacks = [];
+
+            if (!isset($callbacks) || !is_array($callbacks) || sizeof($callbacks)) {
+                return;
             }
 
-            if (!is_array($value)) {
-                $value = [
-                    'type' => $value,
-                    'default' => Schema::NOT_DEFINED,
-                    'size' => !in_array($value, $no_size_types) ? 255 : false,
-                    'not_null' => false,
-                    'primary' => false,
-                    'optional' => []
-                ];
+            foreach ($callbacks as $k => $v) {
+                if (!is_string($k) || !isset($v) || !is_callable($v)) {
+                    continue;
+                }
+
+                $this->callbacks[$k] = $v;
+            }
+        }
+
+        /**
+         * Hooks a function or method to a specific action.
+         * @param $key
+         * @param $callback
+         */
+        public function add_hook($key, $callback) {
+            if (!isset($key) || !isset($callback) || !is_string($key) || !is_callable($callback)) {
+                return;
             }
 
-            if (in_array($value["type"], $no_size_types) and key_exists("LEN", $value) and $value['LEN'] != false) {
-                throw new ErrorException("Data type {$value["type"]} does not support LEN");
+            $this->callbacks[$key] = $callback;
+        }
+
+        /**
+         * Unhooks a function or method from a specific action.
+         * @param $key
+         * @access public
+         * @noinspection PhpUnused
+         */
+        public function remove_hook($key) {
+            if ($this->exists_hook($key)) {
+                unset($this->callbacks[$key]);
+            }
+        }
+
+        /**
+         *  Determines whether an offset hook.
+         * @param $key
+         * @return bool
+         */
+        public function exists_hook($key) {
+            return isset($key) && isset($this->callbacks[$key]);
+        }
+
+        /**
+         * Calls the callback functions that have been added to an action hook.
+         * @param $key
+         * @param mixed ...$args
+         * @return null
+         */
+        public function run_hook($key, ...$args) {
+            if ($this->exists_hook($key)) {
+                $func = $this->callbacks[$key];
+
+                if (!isset($args) || !is_array($args)) {
+                    $args = [];
+                }
+
+                if (isset($func)) {
+                    return $func(...$args);
+                }
             }
 
-            $this->fluids[$key] = (object)array(
-                'type' => $value["type"],
-                'default' => key_exists("default", $value) ? $value["default"] : false,
-                'size' => !in_array($value["type"], $no_size_types) ? (key_exists("LEN", $value) ? (int)$value["LEN"] : 255) : false,
-                'not_null' => key_exists("not_null", $value) ? (boolean)boolval($value["not_null"]) : false,
-                'primary' => key_exists("primary", $value) ? (boolean)boolval($value["primary"]) : false,
-                'optional' => []
-            );
+            return null;
+        }
+    }
+}
+
+namespace phpsqlgoose\Engine\Parser {
+
+    use ErrorException;
+    use Exception;
+    use phpsqlgoose\Engine\Operator\Operator;
+    use phpsqlgoose\Schema;
+    use function phpsqlgoose\Engine\bind;
+    
+    /**
+     * Class ParserOperators
+     * @package Engine\Parser
+     */
+    class ParserOperators extends Operator {
+
+        /**
+         * @param Schema $schema
+         * @param string $fluid
+         * @param array $array
+         * @return array
+         * @throws Exception
+         */
+        public function parse_operators(Schema $schema, string $fluid, array $array) {
+            $blocks = [];
+
+            foreach ((array) $array as $key => $value) {
+                if ($this->is_operator($key)) {
+                    if ($this->is_negative_operator($key)) {
+                        $results = $this->handle_operator($schema, $fluid, $key, $value);
+
+                        if (is_string($results) and $results !== false) {
+                            array_push($blocks, bind('(NOT $s)', [
+                                '$s' => [
+                                    'value' => $results,
+                                    'escape' => false
+                                ]
+                            ]));
+                        } else {
+                            throw new Exception("Operator $key is not supported");
+                        }
+
+                    } else {
+                        if (!is_array($value)) {
+                            $value = [$value];
+                        }
+
+                        $results = $this->handle_operator($schema, $fluid, $key, $value);
+
+                        if (is_string($results) and $results !== false) {
+                            $results = $this->handle_operator($schema, $fluid, $key, $value);
+                            array_push($blocks, $results);
+
+                        } else {
+                            throw new Exception("Operator $key is not supported");
+                        }
+
+                    }
+
+                } else {
+                    throw new Exception("Operator $key is not supported");
+                }
+            }
+
+            return $blocks;
+        }
+
+    }
+
+    /**
+     * Class ParserWhile
+     * @package Engine\Parser
+     */
+    class ParserWhile extends ParserOperators {
+
+        /**
+         * @param Schema $schema
+         * @param array $query
+         * @return bool|string
+         * @throws ErrorException
+         * @throws Exception
+         * @throws Exception
+         * @throws Exception
+         */
+        public function parse_while(Schema $schema, array $query) {
+            $expression = array();
+
+            foreach ($query as $fluid => $condition) {
+                if ($this->is_operator($fluid)) {
+                    throw new ErrorException("The top level field $fluid cannot be an operator");
+                } else {
+                    if (is_array($condition)) {
+                        $result = $this->parse_operators($schema, $fluid, $condition);
+
+                        if (!empty($result)) {
+                            array_push($expression, implode(" AND ", $result));
+                        }
+                    } else {
+                        $condition = $this->input_value_to_database($schema, $fluid, $condition);
+                        array_push($expression, "$fluid = $condition");
+                    }
+                }
+            }
+
+            # Cleaning the array of empty elements
+            $expression = array_filter($expression, function($element) {
+                return !empty($element);
+            });
+
+            if (!empty($expression)) {
+                return implode(" AND ", $expression);
+            } else {
+                return null;
+            }
         }
     }
 
-
     /**
-     * Get a list of all fields in the database
-     *
-     * @return array List of all database fields
-     * @copyright 2021 iRTEX
-     *
-     * @author masloff (irtex)
+     * Class ParserSelect
+     * @package Engine\Parser
      */
-    public function get_keys()
-    {
-        return array_keys($this->fluids);
+    class ParserSelect extends ParserWhile {
+
+        /**
+         * @param Schema $schema
+         * @param string $select
+         * @return string
+         */
+        public function parse_select(Schema $schema, string $select) {
+            $select = [$select ? $select : '*'];
+
+            foreach ($schema->get_keys() as $key) {
+                if (isset($schema->{$key}->type)) {
+                    if (in_array($schema->{$key}->type, [TYPE_POINT])) {
+                        array_push($select, "X($key) as \"$key.X\"");
+                        array_push($select, "Y($key) as \"$key.Y\"");
+                    } elseif (in_array($schema->{$key}->type, [TYPE_LINESTRING])) {
+                        array_push($select, "AsText($key) as \"$key::LineString\"");
+                    }
+                }
+            }
+
+            return implode(", ", $select);
+        }
     }
 
-
     /**
-     * Get all the fields in the schematic
-     *
-     * @return array Scheme
-     * @copyright 2021 iRTEX
-     *
-     * @author masloff (irtex)
+     * Class ParserUpdate
+     * @package Engine\Parser
      */
-    public function get_fluids()
-    {
-        return $this->fluids;
-    }
+    class ParserUpdate extends ParserWhile {
 
+        /**
+         * @param Schema $schema
+         * @param array $query
+         * @return string
+         * @throws Exception
+         */
+        public function parse_update(Schema $schema, array $query)
+        {
+            $update = array();
 
-    /**
-     * Get the default value for a field in the schema by its key
-     *
-     * @param string $key Field in the scheme
-     * @return mixin Get the default value
-     * @author masloff (irtex)
-     * @copyright 2021 iRTEX
-     *
-     */
-    public function get_default(string $key)
-    {
-        if (is_array($this->fluids) and key_exists($key, $this->fluids) and key_exists("default", $this->fluids[$key])) {
-            return $this->fluids[$key]->default;
+            foreach ($query as $key => $value) {
+                if (is_array($value)) {
+                    array_push($update, bind('$key = $value', [
+                        '$key' => [
+                            'value' => $key,
+                            'escape' => false
+                        ],
+                        '$value' => [
+                            'value' => implode(', ', (array) $this->parse_operators($schema, $key, $value)),
+                            'escape' => false
+                        ]
+                    ]));
+
+                } else {
+                    $value = $this->input_value_to_database($schema, $key, $value);
+
+                    array_push($update, bind('$key = $value', [
+                        '$key' => [
+                            'value' => $key,
+                            'escape' => false
+                        ],
+                        '$value' => [
+                            'value' => $value,
+                            'escape' => false
+                        ]
+                    ]));
+
+                }
+            }
+
+            return implode(", ", $update);
         }
 
-        return Schema::NOT_DEFINED;
     }
+}
 
+namespace phpsqlgoose\Engine\IO {
+
+    use Exception;
+    use phpsqlgoose\Engine\Hook\Hook;
+    use phpsqlgoose\RegexException;
+    use phpsqlgoose\Schema;
+    use phpsqlgoose\Wrapper\File;
+    use phpsqlgoose\Wrapper\LineString;
+    use phpsqlgoose\Wrapper\Point;
+    use phpsqlgoose\Wrapper\Time;
+    use TypeError;
+    use function phpsqlgoose\Engine\bind;
+    use function phpsqlgoose\Engine\sql_escape_string;
 
     /**
-     * Get fluid type by its key
-     *
-     * @param string $key Field in the scheme
-     * @return string Get the type
-     * @author masloff (irtex)
-     * @copyright 2021 iRTEX
-     *
+     * Global handler class for all database data outputs and inputs
+     * @package phpsqlgoose\Engine\IO
      */
-    public function get_type(string $key)
-    {
-        if (is_array($this->fluids) and key_exists($key, $this->fluids) and key_exists("type", $this->fluids[$key])) {
-            return $this->fluids[$key]->type;
+    class IO extends Hook {
+
+        /**
+         * Filters the values before adding them to the database
+         *
+         * @param Schema $schema
+         * @param string $fluid
+         * @param $value
+         * @param bool $validate
+         * @return array|bool|false|float|int|string|string[]|Point|Time
+         * @throws Exception
+         */
+        public function input_value_to_database(Schema $schema, string $fluid, $value, $validate = true) {
+            if ($this->exists_hook('save_' . $fluid)) {
+                $value = $this->run_hook('save_' . $fluid, $value);
+            }
+
+            // Check the field with the filter: does the type of data transmitted match the type declared in the schema?
+            if (isset($schema->{$fluid}) and $validate) {
+
+                if (isset($schema->{$fluid}) and isset($schema->{$fluid}->default)) {
+                    $type = (string) gettype($value);
+
+                    if (
+                        $schema->{$fluid}->type == TYPE_STRING or
+                        $schema->{$fluid}->type == TYPE_TEXT or
+                        $schema->{$fluid}->type == TYPE_PASSWORD or
+                        $schema->{$fluid}->type == TYPE_VARCHAR
+                    ) {
+                        if (!is_string($value)) {
+                            throw new TypeError("The $fluid key expects data of type string, but receives a $type");
+                        }
+                    } elseif (
+                        $schema->{$fluid}->type == TYPE_INT or
+                        $schema->{$fluid}->type == TYPE_SMALLINT or
+                        $schema->{$fluid}->type == TYPE_BIGINT
+                    ) {
+                        if (!is_numeric($value)) {
+                            throw new TypeError("The $fluid expects data of type int, but receives a $type");
+                        }
+                    } elseif (
+                        $schema->{$fluid}->type == TYPE_DOUBLE
+                    ) {
+                        if (!is_double($value)) {
+                            throw new TypeError("The $fluid key expects data of type double, but receives a $type");
+                        }
+                    } elseif (
+                        $schema->{$fluid}->type == TYPE_TIME or
+                        $schema->{$fluid}->type == TYPE_DATE or
+                        $schema->{$fluid}->type == TYPE_DATETIME or
+                        $schema->{$fluid}->type == TYPE_TIMESTAMP
+                    ) {
+                        if (!($value instanceof Time)) {
+                            throw new TypeError("The $fluid key expects data of type Time, but receives a $type");
+                        }
+                    } elseif (
+                        $schema->{$fluid}->type == TYPE_POINT
+                    ) {
+                        if (!($value instanceof Point)) {
+                            throw new TypeError("The $fluid key expects data of type Point, but receives a $type");
+                        }
+                    } elseif (
+                        $schema->{$fluid}->type == TYPE_LINESTRING
+                    ) {
+                        if (!($value instanceof LineString)) {
+                            throw new TypeError("The $fluid key expects data of type Linestring, but receives a $type");
+                        }
+                    } elseif (
+                        $schema->{$fluid}->type == TYPE_BLOB or
+                        $schema->{$fluid}->type == TYPE_MEDIUMBLOB or
+                        $schema->{$fluid}->type == TYPE_LONGBLOB
+                    ) {
+                        if (!($value instanceof File)) {
+                            throw new TypeError("The $fluid key expects data of type File, but receives a $type");
+                        }
+                    } elseif (
+                        $schema->{$fluid}->type == TYPE_OBJECT
+                    ) {
+                        if (!is_array($value) and !is_object($value)) {
+                            throw new TypeError("The $fluid key expects data of type object or array, but receives a $type");
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+
+                if (isset($schema->{$fluid}->{"@validate"})) {
+                    var_dump('Validate');
+                }
+
+                // Check the field with a filter: does it satisfy regex?
+                if (isset($schema->{$fluid}->regex)) {
+                    preg_match($schema->{$fluid}->regex, strval($value), $matches);
+
+                    if (empty($matches)) {
+                        throw new RegexException("The data ({$value}) in key {$fluid} do not match the regular expression {$schema->{$fluid}->regex}");
+                    }
+                }
+
+                // Check the field with a filter: is it larger than the expected value?
+                if (isset($schema->{$fluid}->min)) {
+                    if (in_array($schema->{$fluid}->type, [TYPE_INT, TYPE_BIGINT, TYPE_DOUBLE, TYPE_SMALLINT]) and is_numeric($value) and intval($value) < intval($schema->{$fluid}->min)) {
+                        throw new RegexException("Number {$value} less than the minimum value is " . intval($schema->{$fluid}->min));
+                    } elseif (in_array($schema->{$fluid}->type, [TYPE_STRING, TYPE_TEXT, TYPE_VARCHAR, TYPE_LONGTEXT, TYPE_MEDIUMTEXT, TYPE_PASSWORD, TYPE_LINESTRING, TYPE_URL]) and is_string($value) and strlen($value) < intval($schema->{$fluid}->min)) {
+                        throw new RegexException("String length {$value} less than the minimum value is " . intval($schema->{$fluid}->min));
+                    } elseif (in_array($schema->{$fluid}->type, [TYPE_OBJECT]) and is_array($value) and count($value) < intval($schema->{$fluid}->min)) {
+                        throw new RegexException("Array length {$value} less than the minimum value is " . intval($schema->{$fluid}->min));
+                    }
+                }
+
+                // Check the field with a filter: is it less than the expected value?
+                if (isset($schema->{$fluid}->max)) {
+                    if (in_array($schema->{$fluid}->type, [TYPE_INT, TYPE_BIGINT, TYPE_DOUBLE, TYPE_SMALLINT]) and is_numeric($value) and intval($value) > intval($schema->{$fluid}->max)) {
+                        throw new RegexException("Number {$value} more than the minimum value is " . intval($schema->{$fluid}->max));
+                    } elseif (in_array($schema->{$fluid}->type, [TYPE_STRING, TYPE_TEXT, TYPE_VARCHAR, TYPE_LONGTEXT, TYPE_MEDIUMTEXT, TYPE_PASSWORD, TYPE_LINESTRING, TYPE_URL]) and is_string($value) and strlen($value) > intval($schema->{$fluid}->max)) {
+                        throw new RegexException("String length {$value} more than the minimum value is " . intval($schema->{$fluid}->max));
+                    } elseif (in_array($schema->{$fluid}->type, [TYPE_OBJECT]) and is_array($value) and count($value) > intval($schema->{$fluid}->max)) {
+                        throw new RegexException("Array length {$value} more than the minimum value is " . intval($schema->{$fluid}->max));
+                    }
+                }
+
+                // Checking and executing specific data handlers
+                switch ($schema->{$fluid}->type) {
+                    case TYPE_PASSWORD:
+                        $value = bind("'\$s'", [
+                            '$s' => [
+                                'value' => md5($value),
+                                'escape' => false
+                            ]
+                        ]);
+                        break;
+                    case TYPE_OBJECT:
+                        $value = json_encode($value);
+                        break;
+                    case TYPE_POINT:
+                        $value = "POINT({$value->get_latitude()}, {$value->get_longitude()})";
+                        break;
+                    case TYPE_LINESTRING:
+                        $value = bind("LineStringFromText('LINESTRING(\$s)')", [
+                            '$s' => [
+                                'value' => implode(', ', array_map(function (Point $point) {
+                                    return "{$point->get_latitude()} {$point->get_longitude()}";
+                                }, $value->get_points())),
+                                'escape' => false
+                            ]
+                        ]);
+                        break;
+                    case TYPE_BLOB:
+                    case TYPE_MEDIUMBLOB:
+                    case TYPE_LONGBLOB:
+                        if ($value instanceof File) {
+                            $value = bind("'\$s'", [
+                                '$s' => [
+                                    'value' => sql_escape_string($value
+                                        ->read()
+                                        ->get_binary()),
+                                    'escape' => false
+                                ]
+                            ]);
+                        }
+                        break;
+                    case TYPE_TEXT:
+                    case TYPE_DATETIME:
+                    case TYPE_DATE:
+                        if ($value instanceof Time) {
+                            $value = bind("'\$s'", [
+                                '$s' => [
+                                    'value' => $value->get_date(),
+                                    'escape' => false
+                                ]
+                            ]);
+                        }
+                        break;
+
+                    default:
+                        if ($value === 0) {
+                            $value = 0;
+                        }
+
+                        if (is_numeric($value)) {
+                            $value = (int) $value;
+                        }
+
+                        if (is_int($value)) {
+                            $value = (int) $value;
+                        }
+
+                        if (is_string($value)) {
+                            $value = "'" . sql_escape_string($value) . "'";
+                        }
+
+                        if (is_bool($value)) {
+                            $value = boolval($value);
+                        }
+                }
+            }
+
+            return $value;
         }
 
-        return false;
+        /**
+         * Filters values from the database before outputting them to the function
+         *
+         * @param Schema $schema
+         * @param array $rows
+         * @param array $filter
+         * @return array|mixed
+         * @throws Exception
+         */
+        public function output_rows_from_database(Schema $schema, array $rows, array $filter) {
+            foreach ($rows as $key => $value) {
+                if (!empty($filter)) {
+                    if (!in_array($key, $filter)) {
+                        unset($rows[$key]);
+                        continue;
+                    }
+                }
+
+                if (isset($schema->{$key}) and isset($schema->{$key}->type)) {
+                    switch ($schema->{$key}->type) {
+                        case TYPE_VARCHAR:
+                        case TYPE_TEXT:
+                        case TYPE_PASSWORD:
+                        case TYPE_MEDIUMTEXT:
+                        case TYPE_LONGTEXT:
+                        case TYPE_STRING:
+                            $rows[$key] = stripslashes($value);
+                            break;
+                        case TYPE_OBJECT:
+                            $rows[$key] = json_decode($value);
+                            break;
+                        case TYPE_DATE:
+                        case TYPE_TIMESTAMP:
+                        case TYPE_DATETIME:
+                        case TYPE_TIME:
+                            $rows[$key] = new Time($value);
+                            break;
+                        case TYPE_LONGBLOB:
+                        case TYPE_MEDIUMBLOB:
+                        case TYPE_BLOB:
+                            $rows[$key] = (new File())
+                                ->set_binary($value);
+                            break;
+                        case TYPE_SMALLINT:
+                        case TYPE_BIGINT:
+                        case TYPE_INT:
+                            $rows[$key] = intval($value);
+                            break;
+                        case TYPE_DOUBLE:
+                            $rows[$key] = doubleval($value);
+                            break;
+                        case TYPE_BOOLEAN:
+                            $rows[$key] = boolval($value);
+                            break;
+                        case TYPE_POINT:
+                            $rows[$key] = new Point(intval($rows["$key.X"]), intval($rows["$key.Y"]));
+                            unset($rows["$key.X"]);
+                            unset($rows["$key.Y"]);
+                            break;
+                        case TYPE_LINESTRING:
+                            preg_match_all('#LINESTRING\((.+?)\)#is', $rows["$key::LineString"], $out);
+
+                            if (isset($out[1][0]) and !empty($out[1][0])) {
+                                $rows[$key] = new LineString(...array_map(function ($point) {
+                                    $point = explode(' ', $point);
+                                    if (isset($point[0]) and isset($point[1])) {
+                                        return new Point(intval($point[0]), intval($point[1]));
+                                    } else {
+                                        return null;
+                                    }
+                                }, explode(',', $out[1][0])));
+                                unset($rows["$key::LineString"]);
+                            }
+
+                            break;
+                        default:
+                            throw new Exception('Unexpected type');
+                    }
+                }
+            }
+
+            if (count($rows) == 1) {
+                $array = array_values($rows);
+                $rows = end($array);
+            }
+
+            return $rows;
+        }
+
     }
 
+}
+
+
+namespace phpsqlgoose\Engine\Operator {
+
+    use Exception;
+    use phpsqlgoose\Engine\IO\IO;
+    use phpsqlgoose\Schema;
+    use function phpsqlgoose\Engine\bind;
 
     /**
-     * Verify the data with the field data type
+     * Based on the template, provide a ready-made SQL query section
      *
-     * @param string $key Field in the scheme
-     * @param string $value Value
-     * @return boolean Is the data type correct?
-     * @copyright 2021 iRTEX
-     *
-     * @author masloff (irtex)
+     * @param Engine $engine Class Engine
+     * @param Schema $schema Class Schema
+     * @param string $key Field to be specified in the SQL query
+     * @param array $query Request for processing as an array
+     * @param string $template The template itself, on which the output will be prepared
+     * @return string|string[]
+     * @throws Exception
+     * @noinspection PhpUnused
      */
-    public function validate_type(string $key, $value)
+    function template(Engine $engine, Schema $schema, string $key, $query, string $template) {
+        $sql_query_array = array();
+
+        if (is_array($query)) {
+            foreach ($query as $variant => $array) {
+                array_push($sql_query_array, bind($template, [
+                    '$key' => $key,
+                    '$value' => [
+                        'value' => $engine->input_value_to_database($schema, $key, $array),
+                        'escape' => false
+                    ],
+                    '$implode' => implode(array_map(function ($e) use ($engine, $schema, $key) {
+                        return $engine->input_value_to_database($schema, $key, $e);
+                    }, $query))
+                ]));
+            }
+        }
+
+        return bind('($s)', [
+            '$s' => [
+                'value' => implode(' OR ', $sql_query_array),
+                'escape' => false
+            ]
+        ]);
+    }
+
+    /**
+     * Class Engine
+     * @package Engine\Operator
+     */
+    class Engine extends IO {
+
+        /**
+         * Connects the two conditions and the records must satisfy one of these conditions
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function or(Schema $schema, string $key, array $query): string {
+            $sql_query_array = array();
+
+            if (is_array($query)) {
+                foreach ($query as $variant) {
+                    array_push($sql_query_array, bind('$key = $value', [
+                        '$key' => $key,
+                        '$value' => [
+                            'value' => $this->input_value_to_database($schema, $key, $variant),
+                            'escape' => false
+                        ]
+                    ]));
+                }
+            }
+
+            return bind('($s)', [
+                '$s' => [
+                    'value' => implode(' OR ', $sql_query_array),
+                    'escape' => false
+                ]
+            ]);
+        }
+
+        /**
+         * Determines size of elements that should be
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function len(Schema $schema, string $key, array $query): string {
+            $sql_query_array = array();
+
+            if (is_array($query)) {
+                foreach ($query as $variant => $array) {
+                    $comparison = false;
+
+                    if ($variant == '$gt') {
+                        $comparison = '>';
+                    } elseif ($variant == '$lt') {
+                        $comparison = '<';
+                    } elseif ($variant == '$eq') {
+                        $comparison = '=';
+                    } elseif ($variant == '$gte') {
+                        $comparison = '>=';
+                    } elseif ($variant == '$lte') {
+                        $comparison = '<=';
+                    }
+
+                    array_push($sql_query_array, bind(template($this, $schema, $key, $query, 'LENGTH($key) $comparison $value'), [
+                        '$comparison' => $comparison
+                    ]));
+                }
+            }
+
+            return bind('($s)', [
+                '$s' => [
+                    'value' => implode(' OR ', $sql_query_array),
+                    'escape' => false
+                ]
+            ]);
+        }
+
+        /**
+         * more or equal
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function gte(Schema $schema, string $key, array $query): string {
+            return template($this, $schema, $key, $query, '$key >= $value');
+        }
+
+        /**
+         * more
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function gt(Schema $schema, string $key, array $query): string {
+            return template($this, $schema, $key, $query, '$key > $value');
+        }
+
+        /**
+         * less or equal
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function lte(Schema $schema, string $key, array $query): string {
+            return template($this, $schema, $key, $query, '$key <= $value');
+        }
+
+        /**
+         * less
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function lt(Schema $schema, string $key, array $query): string {
+            return template($this, $schema, $key, $query, '$key < $value');
+        }
+
+        /**
+         * equal
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function eq(Schema $schema, string $key, array $query): string {
+            return template($this, $schema, $key, $query, '$key = $value');
+        }
+
+        /**
+         * The LIKE operator is used in a WHERE clause to search for a specified pattern in a column.
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function like(Schema $schema, string $key, array $query): string {
+            return template($this, $schema, $key, $query, '$key LIKE $value');
+        }
+
+        /**
+         * Defines an array of values, one of which must have a record field
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function in(Schema $schema, string $key, array $query): string {
+            return template($this, $schema, $key, $query, '$key IN ($implode)');
+        }
+
+        /**
+         * The BETWEEN statement selects values within a specified range. These values can be numbers, text or dates.
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @noinspection PhpUnused
+         */
+        protected function btw(Schema $schema, string $key, array $query): string {
+
+            $engine = $this;
+            return bind('$key BETWEEN $value', [
+                '$key' => $key,
+                '$value' => [
+                    'value' => implode(" AND ", array_map(function ($e) use ($key, $schema, $engine) {
+                        return $engine->input_value_to_database($schema, $key, $e);
+                    }, $query)),
+                    'escape' => false
+                ]
+            ]);
+
+        }
+
+        /**
+         * does not equal
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @noinspection PhpUnused
+         */
+        protected function ne(Schema $schema, string $key, array $query): string {
+            $engine = $this;
+            return bind('$key IN ($value)', [
+                '$key' => $key,
+                '$value' => [
+                    'value' => implode(", ", array_map(function ($e) use ($key, $schema, $engine) {
+                        return $engine->input_value_to_database($schema, $key, $e);
+                    }, $query)),
+                    'escape' => false
+                ]
+            ]);
+        }
+
+        /**
+         * This operator is used to increment the value of the field by the specified amount.
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @noinspection PhpUnused
+         */
+        protected function inc(Schema $schema, string $key, array $query): string {
+            $engine = $this;
+            return bind('$key + $value', [
+                '$key' => $key,
+                '$value' => [
+                    'value' => implode(", ", array_map(function ($e) use ($key, $schema, $engine) {
+                        return $engine->input_value_to_database($schema, $key, $e);
+                    }, $query)),
+                    'escape' => false
+                ]
+            ]);
+        }
+
+        /**
+         * This operator is used to multiply the value of the field by the specified amount.
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string|string[]
+         * @noinspection PhpUnused
+         */
+        protected function mul(Schema $schema, string $key, array $query): string {
+            $engine = $this;
+            return bind('$key * $value', [
+                '$key' => $key,
+                '$value' => [
+                    'value' => implode(", ", array_map(function ($e) use ($key, $schema, $engine) {
+                        return $engine->input_value_to_database($schema, $key, $e);
+                    }, $query)),
+                    'escape' => false
+                ]
+            ]);
+        }
+
+        /**
+         * The records must NOT meet the condition
+         *
+         * @param Schema $schema
+         * @param string $key
+         * @param array $query
+         * @return string
+         * @throws Exception
+         * @noinspection PhpUnused
+         */
+        protected function not(Schema $schema, string $key, array $query): string {
+            return template($this, $schema, $key, $query, 'NOT $key = $value');
+        }
+
+    }
+
+    /**
+     * Class Operator
+     * A class of operators for creating SQL queries
+     * @package phpgoose
+     */
+    abstract class Operator extends Engine
     {
-        if (is_array($this->fluids) and key_exists($key, $this->fluids) and key_exists("default", $this->fluids[$key])) {
-            if (
-                $this->fluids[$key]->type == TYPE_STRING or
-                $this->fluids[$key]->type == TYPE_TEXT or
-                $this->fluids[$key]->type == TYPE_PASSWORD or
-                $this->fluids[$key]->type == TYPE_VARCHAR
-            ) {
-                if (!is_string($value)) {
-                    $type = gettype($value);
-                    throw new \TypeError("The $key key expects data of type string, but receives a $type");
+
+        /**
+         * Operator marking by access level
+         */
+        const MARKUP = [
+            'public' => [
+                'and',
+                'or',
+                'not'
+            ],
+            'private' => [
+                'not',
+                'or',
+                'len',
+                'gte',
+                'lte',
+                'gt',
+                'lt',
+                'eq',
+                'ne',
+                'like',
+                'in',
+                'btw'
+            ],
+            'update' => [
+                'inc',
+                'mul',
+            ]
+        ];
+
+        /**
+         * Get all operators
+         *
+         * @param string $type Type of operators received: private or public or all
+         * @return array
+         * @noinspection PhpUnused
+         */
+        protected function get_all_operators ($type = 'all') {
+            $return = array();
+            if ($type == 'private') {
+                $MARKUP = (array) self::MARKUP['private'];
+                array_walk_recursive($MARKUP, function($a) use (&$return) { $return[] = $a; });
+
+            } elseif ($type == 'public') {
+                $MARKUP = (array) self::MARKUP['public'];
+                array_walk_recursive($MARKUP, function($a) use (&$return) { $return[] = $a; });
+
+            } elseif ($type == 'all') {
+                $MARKUP = (array) self::MARKUP;
+                array_walk_recursive($MARKUP, function($a) use (&$return) { $return[] = $a; });
+
+            }
+
+            return $return;
+        }
+
+        /**
+         * Wrap the operator in "operator" markup
+         *
+         * @param string $operator
+         * @return string
+         * @noinspection PhpUnused
+         */
+        protected function wrap_operator(string $operator) {
+            if (substr($operator, 0, 1 ) === "$") {
+                return $operator;
+            } else {
+                return "$$operator";
+            }
+        }
+
+        /**
+         * Unfold the operator and strip it of its "operator" markup
+         *
+         * @param string $operator
+         * @return string|string[]
+         * @noinspection PhpUnused
+         */
+        protected function unwrap_operator(string $operator) {
+            if (substr($operator, 0, 1 ) === "$") {
+                return str_replace('$', '', $operator);
+            } elseif (substr($operator, 0, 2 ) === "!$") {
+                return str_replace('!$', '', $operator);
+            } else {
+                return $operator;
+            }
+        }
+
+        /**
+         * Checks whether the string is an operator
+         *
+         * @param string $operator
+         * @return bool
+         * @noinspection PhpUnused
+         */
+        protected function is_operator(string $operator) {
+            return in_array((string) $this->unwrap_operator($operator), $this->get_all_operators('all'));
+        }
+
+        /**
+         * Checks if the string is a negative operator
+         *
+         * @param string $operator
+         * @return bool
+         * @noinspection PhpUnused
+         */
+        protected function is_negative_operator(string $operator) {
+            if (in_array((string) $this->unwrap_operator($operator), $this->get_all_operators('all'))) {
+                if (substr($operator, 0, 2 ) === "!$") {
+                    return true;
                 }
-            } elseif (
-                $this->fluids[$key]->type == TYPE_INT or
-                $this->fluids[$key]->type == TYPE_SMALLINT or
-                $this->fluids[$key]->type == TYPE_BIGINT
-            ) {
-                if (!is_numeric($value)) {
-                    $type = gettype($value);
-                    throw new \TypeError("The $key key expects data of type int, but receives a $type");
-                }
-            } elseif (
-                $this->fluids[$key]->type == TYPE_DOUBLE
-            ) {
-                if (!is_double($value)) {
-                    $type = gettype($value);
-                    throw new \TypeError("The $key key expects data of type double, but receives a $type");
-                }
-            } elseif (
-                $this->fluids[$key]->type == TYPE_TIME or
-                $this->fluids[$key]->type == TYPE_DATE or
-                $this->fluids[$key]->type == TYPE_DATETIME or
-                $this->fluids[$key]->type == TYPE_TIMESTAMP
-            ) {
-                if (!($value instanceof Time)) {
-                    $type = gettype($value);
-                    throw new \TypeError("The $key key expects data of type Time, but receives a $type");
-                }
-            } elseif (
-                $this->fluids[$key]->type == TYPE_POINT
-            ) {
-                if (!($value instanceof Point)) {
-                    $type = gettype($value);
-                    throw new \TypeError("The $key key expects data of type Point, but receives a $type");
-                }
-            } elseif (
-                $this->fluids[$key]->type == TYPE_OBJECT
-            ) {
-                if (!is_array($value) and !is_object($value)) {
-                    $type = gettype($value);
-                    throw new \TypeError("The $key key expects data of type object or array, but receives a $type");
+            }
+
+            return false;
+        }
+
+        /**
+         * Process a specific operator
+         *
+         * @param Schema $schema Class Schema
+         * @param string $key The field in relation to which the operator operates
+         * @param string $operator Operator
+         * @param array $query Query as an array
+         * @return mixed
+         * @noinspection PhpUnused
+         */
+        protected function handle_operator(Schema $schema, string $key, string $operator, array $query) {
+            if ($this->is_operator($operator)){
+                if (method_exists($this, $this->unwrap_operator($operator))) {
+                    return $this->{$this->unwrap_operator($operator)}($schema, strval($key), (array) $query);
+                } else {
+                    return false;
                 }
             } else {
                 return false;
             }
         }
 
-        return Schema::NOT_DEFINED;
     }
 
+}
+
+
+namespace phpsqlgoose\Helpers {
 
     /**
-     * Process a specific data type and return the result
-     *
-     * @param string $key Field in the scheme
-     * @param string $value Value
-     * @return boolean Is the data type correct?
-     * @copyright 2021 iRTEX
-     *
-     * @author masloff (irtex)
+     * Class Pipe
+     * @noinspection PhpUnused
+     * @package phpgoose
+     * @method static string avg(string|number $formula) The AVG function returns the average value of an expression.
+     * @method static string count(string|number $fluid_or_int) The COUNT function returns the count of an expression.
+     * @method static string min(string|number $fluid_or_int) The MIN function returns the minimum value of an expression.
+     * @method static string max(string|number $fluid_or_int) The MAX function returns the maximum value of an expression.
+     * @method static string sum(string|number $fluid_or_int) The SUM function returns the summed value of an expression.
+     * @method static string mod(string|number $fluid_or_int_1, string|number $fluid_or_int_2) The MOD function finds the remainder of one number divided by another.
+     * @method static string X(string $fluid) Get the X coordinate from a string of type Point
+     * @method static string Y(string $fluid) Get the Y coordinate from a string of type Point
      */
-    public function parse_specific_types(string $key, $value)
+    abstract class Pipe {
+
+        /**
+         * @param string $name
+         * @param array $formulas
+         * @return string
+         */
+        public static function __callStatic(string $name, array $formulas)
+        {
+            $name = (string) strtoupper($name);
+            $formulas = implode(", ", $formulas);
+            return "{$name}({$formulas})";
+        }
+    }
+
+    /**
+     * Value generator
+     * @package phpgoose
+     */
+    abstract class Generator
     {
-        if (is_array($this->fluids) and key_exists($key, $this->fluids) and key_exists("default", $this->fluids[$key])) {
-            switch ($this->fluids[$key]->type) {
-                case TYPE_PASSWORD:
-                    return md5($value);
-                case TYPE_OBJECT:
-                    return json_encode($value);
-                default:
-                    return $value;
+
+        /**
+         * Generate standard record ID
+         *
+         * @noinspection PhpUnused
+         * @param int $length
+         * @return int
+         */
+        public static function id(int $length = 8)
+        {
+            $min = pow(10, $length - 1);
+            $max = pow(10, $length) - 1;
+
+            return mt_rand($min, $max);
+        }
+
+        /**
+         * Generate a secret string
+         *
+         * @noinspection PhpUnused
+         * @param string $salt Salt for secret-string generation
+         * @return string
+         */
+        public static function secret(string $salt)
+        {
+            return strval(mt_rand(0, 0x7fffffff) ^ crc32($salt) ^ crc32(microtime()));
+        }
+
+        /**
+         * Generate UUID
+         *
+         * @return string
+         * @noinspection PhpUnused
+         */
+        public static function UUID(): string
+        {
+            return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+                // 32 bits for "time_low"
+                mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+
+                // 16 bits for "time_mid"
+                mt_rand(0, 0xffff),
+
+                // 16 bits for "time_hi_and_version",
+                // four most significant bits holds version number 4
+                mt_rand(0, 0x0fff) | 0x4000,
+
+                // 16 bits, 8 bits for "clk_seq_hi_res",
+                // 8 bits for "clk_seq_low",
+                // two most significant bits holds zero and one for variant DCE1.1
+                mt_rand(0, 0x3fff) | 0x8000,
+
+                // 48 bits for "node"
+                mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+            );
+        }
+
+
+        /**
+         * Generate a random string, using a cryptographically secure
+         * pseudorandom number generator (random_int)
+         *
+         * For PHP 7, random_int is a PHP core function
+         * For PHP 5.x, depends on https://github.com/paragonie/random_compat
+         *
+         * @param int $length How many characters do we want?
+         * @param string $alphabet A string of all possible characters
+         *                         to select from
+         * @return string
+         * @throws ErrorException|Exception
+         * @noinspection PhpUnused
+         */
+        public static function password(int $length, string $alphabet = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
+        {
+            $str = '';
+            $max = mb_strlen($alphabet, '8bit') - 1;
+
+            if ($max < 1) {
+                throw new ErrorException('$alphabet must be at least two characters long');
+            }
+
+            for ($i = 0; $i < $length; ++$i) {
+                $str .= $alphabet[random_int(0, $max)];
+            }
+            return $str;
+        }
+
+    }
+
+    /**
+     * Put a string in a secure format for the name of a table, SQL database
+     *
+     * @param string $string
+     * @return string|string[]|null
+     */
+    function sanitize_name(string $string)
+    {
+        return preg_replace('/^-+|-+$/', '', strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', $string)));
+    }
+
+}
+
+namespace phpsqlgoose\Wrapper {
+
+    use \Exception;
+    use TypeError;
+
+    /**
+     * Class Time
+     *
+     * @noinspection PhpUnused
+     * @package phpgoose
+     */
+    class Time
+    {
+        const FORMAT_DATE = 'Y-m-d H:i:s';
+
+        private $unix = 0;
+        private $date = "";
+
+        /**
+         * Time constructor.
+         * @param int $unix
+         */
+        public function __construct($unix = -1)
+        {
+            if ($unix == -1) {
+                $unix = time();
+            }
+
+            if (is_numeric($unix)) {
+                $this->unix = $unix;
+                $this->date = gmdate(Time::FORMAT_DATE, $this->unix);
+
+            } elseif (is_string($unix)) {
+                $parsed = date_parse_from_format(Time::FORMAT_DATE, $unix);
+                $this->unix = mktime($parsed['hour'], $parsed['minute'], $parsed['second'], $parsed['month'], $parsed['day'], $parsed['year']);
+                $this->date = gmdate(Time::FORMAT_DATE, $this->unix);
             }
         }
 
-        return $value;
+        public function __toString()
+        {
+            return strval($this->unix);
+        }
+
+        /**
+         * @return false|int|string
+         */
+        public function get_unix()
+        {
+            return $this->unix;
+        }
+
+        /**
+         * @return false|string
+         */
+        public function get_date()
+        {
+            return $this->date;
+        }
+
+
     }
 
-
     /**
-     * @param string $name
-     * @return mixed
+     * SQL coordinate
+     *
+     * @noinspection PhpUnused
+     * @package phpgoose
      */
-    public function __get(string $name)
+    class Point
     {
-        return $this->fluids[$name];
+
+        private $latitude;
+        private $longitude;
+
+        public function __construct(int $latitude = 0, int $longitude = 0)
+        {
+            $this->latitude = $latitude;
+            $this->longitude = $longitude;
+        }
+
+        /**
+         * @return int
+         */
+        public function get_latitude()
+        {
+            return $this->latitude;
+        }
+
+        public function get_longitude()
+        {
+            return $this->longitude;
+        }
     }
 
     /**
-     * @param string $name
-     * @param $value
+     * Class LineString
+     *
+     * @noinspection PhpUnused
+     * @package Wrapper
      */
-    public function __set(string $name, $value)
+    class LineString
     {
-        $this->fluids[$name] = $value;
+
+        private $points = [];
+
+        public function __construct(...$points)
+        {
+            foreach ($points as $point) {
+                if ($point instanceof Point) {
+                    array_push($this->points, $point);
+                } elseif (is_array($point)) {
+                    array_push($this->points, new Point($point[0], $point[1]));
+                } else {
+                    throw new TypeError('The coordinate list must contain Point objects or be an array of two numbers of X and Y coordinates');
+                }
+            }
+        }
+
+        /**
+         * @return array
+         */
+        public function get_points()
+        {
+            return $this->points;
+        }
     }
 
     /**
-     * @param string $name
-     * @return bool
+     * Class File
+     *
+     * @package Wrapper
      */
-    public function __isset(string $name)
-    {
-        return isset($this->fluids[$name]);
+    class File {
+
+        private $binary;
+        private $filename;
+
+        /**
+         * @link https://php.net/manual/en/language.oop5.decon.php
+         * @param $file
+         * @throws Exception
+         */
+        public function __construct(string $file = null)
+        {
+            if ($file !== null) {
+                if (preg_match('~[^\x20-\x7E\t\r\n]~', $file) > 0) {
+                    $this->binary = $file;
+                } elseif (file_exists($file)) {
+                    $this->filename = $file;
+                } else {
+                    throw new Exception("File $file not found");
+                }
+            }
+        }
+
+        /**
+         * @return mixed
+         */
+        public function read()
+        {
+            $this->binary = file_get_contents($this->filename);
+            return $this;
+        }
+
+        /**
+         * @param string $filename
+         * @return mixed
+         */
+        public function write(string $filename)
+        {
+            file_put_contents($filename, $this->binary);
+            return $this;
+        }
+
+
+        /**
+         * @return mixed
+         */
+        public function get_filename()
+        {
+            return $this->filename;
+        }
+
+
+        /**
+         * @return mixed
+         */
+        public function get_binary()
+        {
+            return $this->binary;
+        }
+
+        /**
+         * @param string $binary
+         * @return File
+         */
+        public function set_binary(string $binary): File
+        {
+            $this->binary = $binary;
+            return $this;
+        }
+
+        /**
+         * @param string $filename
+         * @return File
+         */
+        public function set_filename(string $filename): File
+        {
+            $this->filename = $filename;
+            return $this;
+        }
     }
 
+}
+
+
+namespace phpsqlgoose\Types {
+
     /**
+     * Type to create a record ID
+     *
+     * @noinspection PhpUnused
      * @return array
      */
-    public function __debugInfo()
-    {
-        return $this->fluids;
-    }
-
-    /**
-     * @return array
-     */
-    public function __serialize(): array
+    function ID()
     {
         return array(
-            'fluids' => $this->fluids,
-            'data_types' => $this->data_types
+            'constraint' => false,
+            'primary' => true,
+            'type' => TYPE_BIGINT,
+            'auto_increment' => true,
+            'comment' => 'ID',
+            'size' => false,
+            'not_null' => true
         );
     }
 
     /**
-     * @param string $name
+     * Type for creating an encrypted password
+     *
+     * @noinspection PhpUnused
+     * @return array
      */
-    public function __unset(string $name)
+    function Password()
     {
-        unset($this->fluids[$name]);
+        return array(
+            'primary' => false,
+            'type' => TYPE_PASSWORD,
+            'not_null' => true
+        );
     }
 
     /**
+     * Type to create time
+     *
+     * @noinspection PhpUnused
+     * @return array
+     */
+    function DateTime()
+    {
+        return array(
+            'constraint' => false,
+            'primary' => false,
+            'type' => TYPE_DATETIME,
+            'auto_increment' => false,
+            'comment' => 'Time',
+            'not_null' => true
+        );
+    }
+
+    /**
+     * Type to create email
+     *
+     * @noinspection PhpUnused
+     * @return array
+     */
+    function Email()
+    {
+        return array(
+            'comment' => 'Email',
+            'not_null' => true,
+            'type' => TYPE_STRING,
+            'regex' => REGEX_EMAIL,
+            'unique' => true,
+            'min' => 8,
+            'max' => 32
+        );
+    }
+
+    /**
+     * Type to create nickname
+     *
+     * @noinspection PhpUnused
+     * @return array
+     */
+    function Nickname()
+    {
+        return array(
+            'comment' => 'Nickname',
+            'not_null' => true,
+            'type' => TYPE_STRING,
+            'regex' => REGEX_NICKNAME,
+            'unique' => true,
+            'min' => 4,
+            'max' => 32
+        );
+    }
+
+    /**
+     * Type to create text
+     *
+     * @noinspection PhpUnused
+     * @return array
+     */
+    function Text()
+    {
+        return array(
+            'comment' => 'Text',
+            'not_null' => true,
+            'type' => TYPE_TEXT,
+        );
+    }
+
+    /**
+     * Type to create number
+     *
+     * @noinspection PhpUnused
+     * @return array
+     */
+    function Number()
+    {
+        return array(
+            'comment' => 'Number',
+            'not_null' => true,
+            'type' => TYPE_INT,
+        );
+    }
+
+    /**
+     * Type to create point
+     *
+     * @noinspection PhpUnused
+     * @return array
+     */
+    function Point()
+    {
+        return array(
+            'comment' => 'Point',
+            'not_null' => true,
+            'type' => TYPE_POINT,
+        );
+    }
+
+    /**
+     * Type to create linestring
+     *
+     * @noinspection PhpUnused
+     * @return array
+     */
+    function LineString()
+    {
+        return array(
+            'comment' => 'Point',
+            'not_null' => true,
+            'type' => TYPE_LINESTRING,
+        );
+    }
+
+    /**
+     * Type to create blob
+     *
+     * @noinspection PhpUnused
+     * @return array
+     */
+    function Blob()
+    {
+        return array(
+            'comment' => 'Blob',
+            'null' => true,
+            'type' => TYPE_BLOB,
+        );
+    }
+
+    /**
+     * Type to create phone
+     *
+     * @noinspection PhpUnused
+     * @return array
+     */
+    function PhoneNumber()
+    {
+        return array(
+            'comment' => 'Phone Number',
+            'not_null' => true,
+            'type' => TYPE_VARCHAR,
+
+            '@validate' => function($number) {
+                $formats = [
+                    '###-###-####', '####-###-###',
+                    '(###) ###-###', '####-####-####',
+                    '##-###-####-####', '####-####', '###-###-###',
+                    '#####-###-###', '##########', '#########',
+                    '# ### #####', '#-### #####'
+                ];
+
+                return in_array(
+                    trim(preg_replace('/[0-9]/', '#', $number)),
+                    $formats
+                );
+            }
+        );
+    }
+
+}
+
+
+namespace phpsqlgoose\Engine {
+
+    use phpsqlgoose\Connection;
+
+    /**
+     * Shield the SQL string
+     *
+     * @param string $string
      * @return false|string
      */
-    public function __toString()
+    function sql_escape_string(string $string)
     {
-        return json_encode($this->fluids);
-    }
-
-    /**
-     * @return $this
-     */
-    public function __clone()
-    {
-        return $this;
-    }
-
-    /**
-     * @param array $data
-     */
-    public function __unserialize(array $data)
-    {
-        $this->fluids = $data['fluids'];
-        $this->data_types = $data['data_types'];
-    }
-
-
-}
-
-# TODO: Add migrate model
-# TODO: Add validate, regex type in fluid scheme
-# TODO: find by id
-
-
-/**
- * Creates a model by implementing a schema for a specific table
- * @package phpgoose
- */
-class Model
-{
-
-    private $excerpts = array();
-    private $schema = false;
-    private $name = false;
-    private $limit = false;
-    private $order = false;
-    private $sort = false;
-    private $select = false;
-    private $offset = false;
-    private $if_exists = false;
-    private $mod = false;
-    private $sql_query = false;
-    private $actions = array();
-    private $data = array();
-
-    /**
-     * Creates a model by implementing a schema for a specific table
-     *
-     * @param string $name Name of the table in which the scheme will be implemented
-     * @param Schema $schema Table schema
-     * @throws ErrorException
-     * @throws SQLException
-     * @author masloff (irtex)
-     * @copyright 2021 iRTEX
-     */
-    public function __construct(string $name, Schema $schema)
-    {
-        if (version_compare(PHP_VERSION, '4.3.0') < 0) {
-            $PHP_VERSION = PHP_VERSION;
-            throw new ErrorException("You are using too old version of PHP ($PHP_VERSION). Version 4.3.0 is required.");
-        }
-
-        global $phpgoose_connection;
-
-        if ($phpgoose_connection instanceof Connection) {
-
-            if ($schema instanceof Schema) {
-                $this->schema = $schema;
-                $this->name = sanitize_name($name);
-
-                $query = "CREATE TABLE IF NOT EXISTS `{$this->name}` (";
-                $query_list = array();
-
-                foreach ($this->schema->get_fluids() as $key => $value) {
-                    $size = $value->size != false ? "({$value->size})" : '';
-
-                    switch ($value->type) {
-                        case 'int':
-                            $type = 'SMALLINT';
-                            break;
-                        case 'url':
-                        case 'password':
-                        case 'string':
-                            $type = 'VARCHAR';
-                            break;
-                        case 'boolean':
-                            $type = 'BIT';
-                            break;
-                        default:
-                            $type = strtoupper($value->type);
-                    }
-                    $not_null = boolval($value->not_null) ? " NOT NULL " : " ";
-                    $primary = boolval($value->primary) ? "PRIMARY KEY" : " ";
-                    $optional = empty($value->optional) ? "" : implode(" ", $value->optional);
-
-                    array_push($query_list, "`{$key}` {$type}{$size} {$optional}{$not_null}{$primary}");
-                }
-
-                $query .= implode(",", $query_list);
-                $query .= ")";
-
-                if ($phpgoose_connection->get_provider() == Connection::PROVIDER_MYSQL) {
-                    mysql_query($query, $phpgoose_connection->get_connection());
-
-                    if (mysql_error($phpgoose_connection->get_connection())) {
-                        throw new SQLException(mysql_error($phpgoose_connection->get_connection()));
-                    }
-                } elseif ($phpgoose_connection->get_provider() == Connection::PROVIDER_MYSQLI) {
-                    $phpgoose_connection->get_connection()->query($query);
-
-                    if (mysqli_error($phpgoose_connection->get_connection())) {
-                        throw new SQLException(mysqli_error($phpgoose_connection->get_connection()));
-                    } else {
-                        return true;
-                    }
-                }
-            } else {
-                throw new ErrorException("The data for the model is of the wrong type");
-            }
-
-        } else {
-            throw new ErrorException("Before you create a model, establish a connection to the database with the Connection class");
-        }
-
-    }
-
-
-    /**
-     * When you create an SQL record via the invoke method,
-     * the function will handle errors and return False instead of the standard PHP errors.
-     * If you need to handle errors manually use the insert method
-     *
-     * @param $data
-     * @return $this|bool
-     */
-    public function __invoke($data)
-    {
-        try {
-            return $this->insert_one($data);
-        } catch (ErrorException $e) {
-            return false;
-        } catch (SQLException $e) {
-            return false;
-        }
-    }
-
-
-    /**
-     * Insert SQL record into the table
-     *
-     * @param $data SQL query as an array
-     * @return true
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function insert_one(array $data)
-    {
-        foreach (array_diff($this->schema->get_keys(), array_keys($data)) as $key) {
-            if ($this->schema->get_default($key) === Schema::NOT_DEFINED) {
-                throw new ErrorException("The key $key does not contain a default value and is not passed to the function when the record is created");
-            } else {
-                $value = $this->schema->get_default($key);
-                $value = $this->schema->parse_specific_types($key, $value);
-                $value = $this->value($value);
-                $data[$key] = $value;
-            }
-        }
-
-        foreach ($data as $key => $value) {
-            $result = $this->action('pre_save', [
-                $key,
-                $value
-            ]);
-
-            if (!empty($result)) {
-                $data[$key] = $result;
-            }
-
-            $data[$key] = $this->schema->parse_specific_types($key, $data[$key]);
-
-            if (!in_array($key, Operator::OPERATORS) and !isset($this->schema->{$key})) {
-                throw new ErrorException("Key $key not found in schema");
-            }
-
-            if (!$this->schema->validate_type($key, $data[$key])) {
-                return new ErrorException('Transmitted data type does not match the data type specified in the schema');
-            }
-
-        }
-
-        $keys = implode(", ", array_map(function ($e) { return sql_escape_string($e); }, array_keys($data)));
-
-        $values = implode(", ", array_map(function ($e) {
-            if (is_int($e) or is_numeric($e) or is_float($e) or is_double($e)) {
-                return bind("%s", [
-                    '%s' => sql_escape_string($e)
-                ]);
-            } elseif (is_string($e)) {
-                return bind("'%s'", [
-                    '%s' => sql_escape_string($e)
-                ]);
-            } elseif ($e instanceof Time) {
-                return bind("'%s'", [
-                    '%s' => sql_escape_string($e->get_timestamp())
-                ]);
-            } elseif (is_callable($e)) {
-                return bind("%s", [
-                    '%s' => sql_escape_string($e())
-                ]);
-            } elseif (is_array($e) or is_object($e)) {
-                return bind("'%s'", [
-                    '%s' => sql_escape_string(json_encode($e))
-                ]);
-            }
-        }, array_values($data)));
-
-        $this->sql_query = bind('INSERT INTO $name ($keys) VALUES ($values);', array(
-            '$name' => $this->name,
-            '$keys' => $keys,
-            '$values' => [
-                'value' => $values,
-                'escape' => false
-            ]
-        ));
-
-        return $this->execute_query($this->sql_query);
-    }
-
-
-    /**
-     * Data for inserting a plural object into the database must be of the array type
-     * 
-     * @param array $data SQL records
-     * @return ErrorException
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function insert_many(array $data) {
-        $records = [];
-        
-        foreach ($data as $record) {
-            if (is_array($record)) {
-                array_push($records, $this->insert_one($record));
-            } else {
-                return new ErrorException('');
-            }
-        }
-
-        return $records;
-    }
-
-
-    /**
-     * Selects records in a collection or view and returns a array selected records.
-     *
-     * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
-     * @return array SQL records
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function find(array $query = [])
-    {
-        $this->sql_query = bind('SELECT $select $mod FROM $name $where $limit $offset $order $sort;', array(
-            '$name' => $this->name,
-            '$offset' => $this->offset ? "OFFSET {$this->offset}" : '',
-            '$mod' => $this->mod ? ", MOD({$this->mod[0]}, {$this->mod[1]})" : '',
-            '$select' => $this->select ? $this->select : '*',
-            '$where' => empty($query) ? "" : "WHERE " . $this->prepare_while($query),
-            '$order' => [
-                'value' => $this->order ? "ORDER BY {$this->order}" : "",
-                'escape' => false
-            ],
-            '$sort' => [
-                'value' => $this->sort ? strtoupper($this->sort) : "",
-                'escape' => false
-            ],
-            '$limit' => [
-                'value' => is_numeric($this->limit) ? "LIMIT {$this->limit}" : "",
-                'escape' => false
-            ]
-        ));
-
-        return $this->execute_query($this->sql_query);
-    }
-
-
-    /**
-     * Returns a single record that satisfies the given query criteria on the collection. If the query satisfies multiple documents, this method returns the last document according to the natural order. If no documents satisfy the query, the method returns null.
-     *
-     * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
-     * @return null|object SQL records
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function find_one(array $query = [])
-    {
-        $results = $this->limit(1)->find($query);
-
-        if ($results) {
-            return (object) end($results);
-        } else {
-            return null;
-        }
-    }
-
-
-    /**
-     * Returns the number of records that match the find() query for the collection.
-     * The count() method does not perform the find() operation,
-     * but instead counts and returns the number of results that match the query.
-     *
-     * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
-     * @return int|null Count orders
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function count(array $query = [])
-    {
-        $this->sql_query = bind('SELECT COUNT($select) FROM $name $where $limit $offset $order $sort;', array(
-            '$name' => $this->name,
-            '$offset' => $this->offset ? "OFFSET {$this->offset}" : '',
-            '$select' => $this->select ? $this->select : '*',
-            '$where' => empty($query) ? "" : "WHERE " . $this->prepare_while($query),
-            '$order' => [
-                'value' => $this->order ? "ORDER BY {$this->order}" : "",
-                'escape' => false
-            ],
-            '$sort' => [
-                'value' => $this->sort ? strtoupper($this->sort) : "",
-                'escape' => false
-            ],
-            '$limit' => [
-                'value' => is_numeric($this->limit) ? "LIMIT {$this->limit}" : "",
-                'escape' => false
-            ]
-        ));
-
-        $data = $this->execute_query($this->sql_query);
-
-        if (is_array($data)) {
-            return array_values(end($data))[0];
-        } else {
-            return null;
-        }
-    }
-
-
-    /**
-     * Removes all records that match the filter from a collection.
-     *
-     * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
-     * @return array SQL records
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function delete_many(array $query = [])
-    {
-        $this->sql_query = bind('DELETE FROM $name $where $limit $offset $order $sort;', array(
-            '$name' => $this->name,
-            '$offset' => $this->offset ? "OFFSET {$this->offset}" : '',
-            '$where' => empty($query) ? "" : "WHERE " . $this->prepare_while($query),
-            '$order' => [
-                'value' => $this->order ? "ORDER BY {$this->order}" : "",
-                'escape' => false
-            ],
-            '$sort' => [
-                'value' => $this->sort ? strtoupper($this->sort) : "",
-                'escape' => false
-            ],
-            '$limit' => [
-                'value' => is_numeric($this->limit) ? "LIMIT {$this->limit}" : "",
-                'escape' => false
-            ]
-        ));
-
-       return $this->execute_query($this->sql_query);
-    }
-
-
-    /**
-     * Removes a single record from a collection.
-     *
-     * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
-     * @return array SQL records
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function delete_one(array $query)
-    {
-        return $this->limit(1)->delete_many($query);
-    }
-
-
-    /**
-     * Changes an existing record or records in the collection.
-     * The method can change specific fields of an existing record or records or
-     * completely replace an existing record, depending on the update parameter.
-     *
-     * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
-     * @param array $update_data The modifications to apply.
-     * @return bool|ErrorException|array SQL records
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function update_many(array $query = [], array $update_data = [])
-    {
-
-        $this->sql_query = bind('UPDATE $name SET $update $where $limit $offset $order $sort;', array(
-            '$name' => $this->name,
-            '$update' => [
-                'value' => empty($update_data) ? "" : $this->prepare_update($update_data),
-                'escape' => false
-            ],
-            '$select' => $this->select ? $this->select : '*',
-            '$offset' => $this->offset ? "OFFSET {$this->offset}" : '',
-            '$where' => empty($query) ? "" : "WHERE " . $this->prepare_while($query),
-            '$order' => [
-                'value' => $this->order ? "ORDER BY {$this->order}" : "",
-                'escape' => false
-            ],
-            '$sort' => [
-                'value' => $this->sort ? strtoupper($this->sort) : "",
-                'escape' => false
-            ],
-            '$limit' => [
-                'value' => is_numeric($this->limit) ? "LIMIT {$this->limit}" : "",
-                'escape' => false
-            ]
-        ));
-
-        return $this->execute_query($this->sql_query);
-
-    }
-
-
-    /**
-     * Updates a single record within the collection based on the filter.
-     *
-     * @param array $query Optional. Specifies selection filter using query operators. To return all documents in a collection, omit this parameter
-     * @param array $update_data The modifications to apply.
-     * @return array|bool|ErrorException SQL records
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function update_one(array $query = [], array $update_data = [])
-    {
-        return $this->limit(1)->update_many($query, $update_data);
-    }
-
-
-    /**
-     * Removes database.
-     *
-     * @return array
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function drop_database()
-    {
-
-        $this->sql_query = bind('DROP DATABASE $if_exists $name;', array(
-            '$name' => $this->name,
-            '$if_exists' => [
-                'value' => $this->if_exists ? "IF EXISTS" : '',
-                'escape' => false
-            ],
-        ));
-
-        return $this->execute_query($this->sql_query);
-
-    }
-
-
-    /**
-     * Removes a table from the database.
-     *
-     * @return array
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function drop_table()
-    {
-
-        $this->sql_query = bind('DROP TABLE $if_exists $name;', array(
-            '$name' => $this->name,
-            '$if_exists' => [
-                'value' => $this->if_exists ? "IF EXISTS" : '',
-                'escape' => false
-            ],
-        ));
-
-        return $this->execute_query($this->sql_query);
-
-    }
-
-
-    /**
-     * Get data type from MySQL
-     *
-     * @param string $column_name
-     * @return bool|mixed
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function get_column_type(string $column_name)
-    {
-
-        $this->sql_query = bind('SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE table_name = \'$name\' AND COLUMN_NAME = \'$column_name\'', array(
-            '$name' => $this->name,
-            '$column_name' => $column_name,
-        ));
-
-        $data = $this->execute_query($this->sql_query);
-
-        if (is_array($data)) {
-            return array_values(end($data))[0];
-        } else {
-            return false;
-        }
-
-    }
-
-
-    /**
-     * Rename the column
-     *
-     * @param string $column_name
-     * @param string $new_column_name
-     * @return bool|mixed
-     * @throws ErrorException
-     * @throws SQLException
-     */
-    public function rename_column(string $column_name, string $new_column_name)
-    {
-        $data_type = $this->get_column_type($column_name);
-
-        if ($data_type) {
-
-            $this->sql_query = bind('ALTER TABLE $name CHANGE COLUMN $column_name $new_column_name $data_type;', array(
-                '$name' => $this->name,
-                '$column_name' => $column_name,
-                '$new_column_name' => $new_column_name,
-                '$data_type' => $data_type
-            ));
-
-            return $this->execute_query($this->sql_query);
-
-        } else {
-            return false;
-        }
-
-    }
-
-
-    /**
-     * Selects a subset of an array to return based on the specified condition.
-     * Returns an array with only those elements that match the condition. The returned elements are in the original order.
-     *
-     * @param string|array $select
-     * @return $this
-     */
-    public function select($select)
-    {
-        if (is_array($select) or is_object($select)) {
-            foreach ($select as $key) {
-                if (!in_array($key, Operator::OPERATORS) and !isset($this->schema->{$key})) {
-                    throw new ErrorException("Key $key not found in schema");
-                }
-            }
-            $this->select = implode(", ", $select);
-        } else {
-            $this->select = (string)$select;
-        }
-
-        return $this;
-    }
-
-
-    /**
-     * @param string $by
-     * @return $this
-     */
-    public function order(string $by)
-    {
-        $this->order = $by;
-        return $this;
-    }
-
-
-    /**
-     * Sorts all input records and returns them to the pipeline in sorted order.
-     * @param string $sort
-     * @return $this
-     * @throws ErrorException
-     */
-    public function sort(string $sort)
-    {
-        switch ($sort) {
-            case 'Z...A':
-            case '9-0':
-            case 'DESC':
-                $this->sort = 'DESC';
-                break;
-            case 'A...Z':
-            case '0-9':
-            case 'ASC':
-                $this->sort = 'ASC';
-                break;
-            default:
-                throw new ErrorException("Wrong sorting type");
-        }
-
-        return $this;
-    }
-
-
-    /**
-     * Limits the number of records passed to the next stage in the pipeline.
-     * @param int $limit
-     * @return $this
-     */
-    public function limit(int $limit)
-    {
-        $this->limit = intval($limit);
-        return $this;
-    }
-
-
-    /**
-     * Skips over the specified number of records pass into the stage and passes the remaining documents to the next stage in the pipeline.
-     * @param int $offset
-     * @return $this
-     */
-    public function offset(int $offset)
-    {
-        $this->offset = intval($offset);
-        return $this;
-    }
-
-
-    /**
-     * Divides one number by another and returns the remainder.
-     *
-     * @param $int_1 Number or field in the scheme
-     * @param $int_2 Number or field in the scheme
-     * @return $this
-     */
-    public function mod($int_1, $int_2)
-    {
-        foreach ([$int_1, $int_2] as $item) {
-            if (is_string($item)) {
-                if (!in_array($item, Operator::OPERATORS) and !isset($this->schema->{$item})) {
-                    throw new ErrorException("Key $item not found in schema");
-                }
-            } elseif (!is_numeric($item) and !is_int($item) and !is_float($item) and !is_double($item)) {
-                throw new ErrorException("The parameter of the function must be the field name of the schema or a number");
-            }
-        }
-
-        $this->mod = [$int_1, $int_2];
-        return $this;
-    }
-
-
-    public function if_exists(bool $boolean = true) {
-        $this->if_exists = $boolean;
-        return $this;
-    }
-
-    private function action($action, $data)
-    {
-        if (array_key_exists($action, $this->actions)) {
-            return $this->actions[$action]($data);
-        }
-    }
-
-    public function on($action, $callback)
-    {
-        $this->actions[$action] = $callback;
-        return $this;
-    }
-
-    private function prepare_while(array $query)
-    {
-        $blocks = [];
-
-        if ($query) {
-            foreach ($query as $key => $value) {
-                if (in_array($key, Operator::OPERATORS)) {
-                    $expression = [];
-
-                    foreach ($value as $name => $value) {
-                        if (!in_array($name, Operator::OPERATORS) and !in_array($name, $this->schema->get_keys())) {
-                            throw new ErrorException("Key $name not found in schema");
-                        }
-
-                        if (!is_array($value)) {
-                            $validate = $this->schema->validate_type($name, $value);
-                            $type = gettype($value);
-                            $fluid_type = $this->schema->get_fluids()[$name]->type;
-
-                            if (!$validate) {
-                                throw new ErrorException("Key $name received data of type $type, but is waiting for type $fluid_type");
-                            }
-
-                            $value = $this->value($value);
-
-                            array_push($expression, "$name = $value");
-                        } else {
-                            array_push($expression, implode(" AND ", $this->prepare_operators($name, $value)));
-                        }
-                    }
-
-                    if ($key == Operator:: AND) {
-                        array_push($blocks, implode(" AND ", $expression));
-                    } elseif ($key == Operator:: OR) {
-                        array_push($blocks, implode(" OR ", $expression));
-                    } else {
-                        throw new ErrorException("The $key operator cannot be used as a top-level operator");
-                    }
-                } else {
-                    if (!in_array($key, $this->schema->get_keys())) {
-                        throw new ErrorException("Key $key not found in schema");
-                    } elseif (!is_array($value)) {
-                        $validate = $this->schema->validate_type($key, $value);
-                        $type = gettype($value);
-                        $fluid_type = $this->schema->get_fluids()[$key]->type;
-
-                        if (!$validate) {
-                            throw new ErrorException("Key $key received data of type $type, but is waiting for type $fluid_type");
-                        }
-                    }
-
-                    if (is_array($value)) {
-                        $expression = $this->prepare_operators($key, $value);
-
-                        array_push($blocks, implode(" AND ", $expression));
-                    } else {
-                        $value = $this->schema->parse_specific_types($key, $value);
-                        $value = $this->value($value);
-
-                        array_push($blocks, "($key = $value)");
-                    }
-                }
-            }
-        }
-
-        if ($query) {
-            return implode(" AND ", $blocks);
-        }
-
-        return false;
-    }
-
-    private function prepare_update(array $query) {
-        $update = array();
-        
-        foreach ($query as $key => $value) {
-            $result = $this->action('pre_save', [
-                $key,
-                $value
-            ]);
-
-            if (!empty($result)) {
-                $value = $result;
-            }
-
-            if (!in_array($key, Operator::OPERATORS) and !isset($this->schema->{$key})) {
-                throw new ErrorException("Key $key not found in schema");
-            }
-
-            if (is_array($value)) {
-                array_push($update, bind('$key = $value', [
-                    '$key' => [
-                        'value' => $key,
-                        'escape' => false
-                    ],
-                    '$value' => [
-                        'value' => implode(', ', $this->prepare_operators($key, $value)),
-                        'escape' => false
-                    ]
-                ]));
-
-            } else {
-
-                $value = $this->schema->parse_specific_types($key, $value);
-                $value = $this->value($value);
-
-                array_push($update, bind('$key = $value', [
-                    '$key' => [
-                        'value' => $key,
-                        'escape' => false
-                    ],
-                    '$value' => [
-                        'value' => $value,
-                        'escape' => false
-                    ]
-                ]));
-                
-            }
-        }
-        
-        return implode(", ", $update);
-    }
-
-    private function value($value)
-    {
-        if ($value === 0) {
-            return 0;
-        }
-        if (is_numeric($value)) {
-            return (int)$value;
-        }
-        if (is_int($value)) {
-            return (int)$value;
-        }
-        if (is_string($value)) {
-            return "'" . sql_escape_string($value) . "'";
-        }
-        if (is_bool($value)) {
-            return boolval($value);
-        }
-        return $value;
-    }
-
-    private function prepare_operators($sqlkey, $object)
-    {
-        $blocks = [];
-
-        foreach ($object as $key => $value) {
-
-            if (in_array($key, [
-                Operator:: AND
-            ])) {
-                throw new ErrorException("The operator $key cannot be used as an element value. It must contain the value of the elements within itself");
-            }
-
-            if (!in_array($key, Operator::OPERATORS) and !in_array($key, $this->schema->get_keys())) {
-                throw new ErrorException("Key $key not found in schema");
-            }
-
-            /**
-             * OR operator
-             */
-            if ($key == Operator:: OR && is_array($value)) {
-                $elements = [];
-
-                foreach ($value as $element) {
-                    if (!is_array($element)) {
-                        if ($sqlkey and $element) {
-                            $element = $this->schema->parse_specific_types($sqlkey, $element);
-                            $element = $this->value($element);
-
-                            array_push($elements, "$sqlkey = $element");
-                        }
-                    }
-                }
-
-                array_push($blocks, "(" . implode(" OR ", $elements) . ")");
-            }
-
-            /**
-             * LEN operator
-             */
-            if ($key == Operator::LEN && is_array($value)) {
-                $elements = [];
-
-                foreach ($value as $key => $element) {
-                    if (!is_array($element)) {
-                        if ($key == Operator::GT) {
-                            $comparison = '>';
-                        } elseif ($key == Operator::LT) {
-                            $comparison = '<';
-                        } elseif ($key == Operator::EQ) {
-                            $comparison = '=';
-                        } elseif ($key == Operator::GTE) {
-                            $comparison = '>=';
-                        } elseif ($key == Operator::LTE) {
-                            $comparison = '<=';
-                        }
-
-                        if (!$comparison) {
-                            throw new ErrorException("The comparison operator is not set");
-                        }
-
-                        $element = $this->schema->parse_specific_types($sqlkey, $element);
-                        $element = $this->value($element);
-
-                        array_push($elements, "(LENGTH($sqlkey) {$comparison} $element)");
-                    }
-                }
-
-                array_push($blocks, "(" . implode(" AND ", $elements) . ")");
-            } /**
-             * NOT operator
-             */
-            elseif ($key == Operator::NOT) {
-                if (!is_array($value)) {
-                    $value = $this->schema->parse_specific_types($sqlkey, $value);
-                    $value = $this->value($value);
-
-                    array_push($blocks, "($sqlkey NOT IN ( $value ))");
-                } else {
-
-                    if ($this->schema->get_type($sqlkey) == TYPE_PASSWORD) {
-                        throw new ErrorException("The data type 'password' cannot be used as an array ");
-                    }
-
-                    $value = array_values($value);
-                    $value = array_map(function ($e) {
-                        return $this->value($e);
-                    }, $value);
-                    $value = implode(", ", $value);
-
-                    array_push($blocks, "($sqlkey NOT IN ( $value ))");
-                }
-            } /**
-             * GT, LT, EQ, GTE, LTE operator
-             */
-            elseif ($key == Operator::GT or $key == Operator::LT or $key == Operator::EQ or $key == Operator::GTE or $key == Operator::LTE) {
-                if ($this->schema->get_type($sqlkey) == TYPE_PASSWORD) {
-                    throw new ErrorException("The data type 'password' cannot be used in comparisons");
-                }
-
-                if (is_numeric($value) or is_int($value)) {
-                    $value = (int)$value;
-
-                    if ($key == Operator::GT) {
-                        $comparison = '>';
-                    } elseif ($key == Operator::LT) {
-                        $comparison = '<';
-                    } elseif ($key == Operator::EQ) {
-                        $comparison = '=';
-                    } elseif ($key == Operator::GTE) {
-                        $comparison = '>=';
-                    } elseif ($key == Operator::LTE) {
-                        $comparison = '<=';
-                    }
-
-                    array_push($blocks, "($sqlkey $comparison $value)");
-                } else {
-                    $type = gettype($value);
-
-                    throw new ErrorException("The {$key} expression must be of type number, passed type $type");
-                }
-            } /**
-             * IN operator
-             */
-            elseif ($key == Operator::IN) {
-                if ($this->schema->get_type($sqlkey) == TYPE_PASSWORD) {
-                    throw new ErrorException("The data type 'password' cannot be checked by the operator \$in");
-                }
-
-                if (!is_array($value)) {
-                    $value = $this->value($value);
-
-                    array_push($blocks, "($sqlkey IN ( $value ))");
-                } else {
-                    $value = array_values($value);
-                    $value = array_map(function ($e) {
-                        return $this->value($e);
-                    }, $value);
-                    $value = implode(", ", $value);
-
-                    array_push($blocks, "($sqlkey IN ( $value ))");
-                }
-            } /**
-             * INC operator
-             */
-            elseif ($key == Operator::INC) {
-                if ($this->schema->get_type($sqlkey) == TYPE_PASSWORD) {
-                    throw new ErrorException("The data type 'password' cannot be checked by the operator \$inc");
-                }
-
-                if (!is_array($value)) {
-                    $value = intval($value);
-
-                    array_push($blocks, "($sqlkey + $value)");
-                } else {
-                    $value = array_values($value);
-                    $value = array_map(function ($e) {
-                        return intval($e);
-                    }, $value);
-                    $value = implode(", ", $value);
-
-                    array_push($blocks, "($sqlkey + $value)");
-                }
-            }
-        }
-
-        return $blocks;
-    }
-
-    private function prepare_rows($results)
-    {
-        $data = array();
-
-        if (function_exists('mysqli_fetch_object')) {
-            if ($results instanceof \mysqli_result) {
-                while ($row = mysqli_fetch_object($results)) {
-                    array_push($data, (array) $this->prepare_row($row));
-                }
-            }
-        } elseif (function_exists('mysql_fetch_object')) {
-            if ($results instanceof \mysql_result) {
-                while ($row = mysql_fetch_object($results)) {
-                    array_push($data, (array) $this->prepare_row($row));
-                }
-            }
-        }
-
-        return $data;
-
-    }
-
-    private function prepare_row($row)
-    {
-        $row = (array) $row;
-
-        foreach ($row as $key => $value) {
-            switch ($this->schema->get_type($key)) {
-                case TYPE_OBJECT:
-                    $row[$key] = json_decode($value);
-                    break;
-                case TYPE_TIME:
-                    $row[$key] = (new Time())->parse_time($value);
-                    break;
-                case TYPE_DATETIME:
-                case TYPE_TIMESTAMP:
-                case TYPE_DATE:
-                    $row[$key] = (new Time())->parse_date($value);
-                    break;
-                case TYPE_SMALLINT:
-                case TYPE_BIGINT:
-                case TYPE_INT:
-                    $row[$key] = intval($value);
-                    break;
-                case TYPE_DOUBLE:
-                    $row[$key] = doubleval($value);
-                    break;
-                case TYPE_BOOLEAN:
-                    $row[$key] = boolval($value);
-                    break;
-                case TYPE_POINT:
-                    $row[$key] = IS_NOT_TYPE;
-                    break;
-            }
-        }
-
-        return $row;
-
-    }
-
-    private function execute_query(string $query) {
-        global $phpgoose_connection;
-
-        if ($this->offset and !$this->limit) {
-            throw new ErrorException("The offset parameter cannot be used without the limit parameter");
-        }
-
-        if (!($phpgoose_connection instanceof Connection)) {
-            throw new ErrorException("No connection to the database established");
-        }
-
-        if ($phpgoose_connection->get_provider() == Connection::PROVIDER_MYSQL) {
-            $results = mysql_query($query, $phpgoose_connection->get_connection());
-
-            if (mysql_error($phpgoose_connection->get_connection())) {
-                throw new SQLException(mysql_error($phpgoose_connection->get_connection()));
-            }
-
-            return $this->prepare_rows($results);
-
-        } elseif ($phpgoose_connection->get_provider() == Connection::PROVIDER_MYSQLI) {
-            $results = mysqli_query($phpgoose_connection->get_connection(), $query);
-
-            if (mysqli_error($phpgoose_connection->get_connection())) {
-                throw new SQLException(mysqli_error($phpgoose_connection->get_connection()));
-            }
-
-            return $this->prepare_rows($results);
-
-        }
-    }
-
-
-}
-
-/**
- * A class of operators for creating SQL queries
- * @package phpgoose
- */
-abstract class Operator
-{
-
-    const OR = '$or';
-    const AND = '$and';
-    const NOT = '$not';
-    const EQ = '$eq';
-    const GT = '$gt';
-    const LT = '$lt';
-    const GTE = '$gte';
-    const LTE = '$lte';
-    const IN = '$in';
-    const ADD = '$add';
-    const LEN = '$len';
-
-    /**
-     * The $inc operator increments a field by a specified value
-     */
-    const INC = '$inc';
-
-    const OPERATORS = [
-        Operator::OR,
-        Operator::AND,
-        Operator::NOT,
-        Operator::EQ,
-        Operator::GT,
-        Operator::LT,
-        Operator::GTE,
-        Operator::LTE,
-        Operator::IN,
-        Operator::LEN,
-        Operator::ADD,
-        Operator::INC
-    ];
-}
-
-
-namespace Helpers;
-
-use Wrapper\Time;
-
-/**
- * Value generator
- * @package phpgoose
- */
-abstract class Generator
-{
-
-    /**
-     * Generate standard record ID
-     *
-     * @param int $length
-     * @return int
-     */
-    public static function id(int $length = 8)
-    {
-        $min = pow(10, $length - 1);
-        $max = pow(10, $length) - 1;
-
-        return mt_rand($min, $max);
-    }
-
-    /**
-     * Generate a secret string
-     *
-     * @param string $salt Salt for secret-string generation
-     * @return string
-     */
-    public static function secret(string $salt)
-    {
-        return strval(mt_rand(0, 0x7fffffff) ^ crc32($salt) ^ crc32(microtime()));
-    }
-
-
-    /**
-     * Generate UUID
-     *
-     * @return string
-     */
-    public static function UUID() {
-        return sprintf( '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-            // 32 bits for "time_low"
-            mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ),
-
-            // 16 bits for "time_mid"
-            mt_rand( 0, 0xffff ),
-
-            // 16 bits for "time_hi_and_version",
-            // four most significant bits holds version number 4
-            mt_rand( 0, 0x0fff ) | 0x4000,
-
-            // 16 bits, 8 bits for "clk_seq_hi_res",
-            // 8 bits for "clk_seq_low",
-            // two most significant bits holds zero and one for variant DCE1.1
-            mt_rand( 0, 0x3fff ) | 0x8000,
-
-            // 48 bits for "node"
-            mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff )
-        );
-    }
-
-
-    /**
-     * Generate a random string, using a cryptographically secure
-     * pseudorandom number generator (random_int)
-     *
-     * For PHP 7, random_int is a PHP core function
-     * For PHP 5.x, depends on https://github.com/paragonie/random_compat
-     *
-     * @param int $length How many characters do we want?
-     * @param string $keyspace A string of all possible characters
-     *                         to select from
-     * @return string
-     * @throws \ErrorException
-     */
-    public static function password(int $length, string $keyspace = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ') {
-        $str = '';
-        $max = mb_strlen($keyspace, '8bit') - 1;
-
-        if ($max < 1) {
-            throw new \ErrorException('$keyspace must be at least two characters long');
-        }
-
-        for ($i = 0; $i < $length; ++$i) {
-            $str .= $keyspace[random_int(0, $max)];
-        }
-        return $str;
-    }
-
-
-    /**
-     * Return the current timestamp
-     * @return Time
-     */
-    public static function current_time() {
-        return new Time(time());
-    }
-}
-
-
-/**
- * Put a string in a secure format for the name of a table, SQL database
- *
- * @param string $string
- * @return string|string[]|null
- */
-function sanitize_name(string $string)
-{
-    return preg_replace('/^-+|-+$/', '', strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', $string)));
-}
-
-
-namespace Wrapper;
-
-/**
- * Class Time
- * @package phpgoose
- */
-class Time
-{
-
-    const FORMAT_TIME = 'H:i:s';
-    const FORMAT_DATE = 'Y-m-d H:i:s';
-
-    private $unix = 0;
-    private $timestamp = "";
-    private $value = "";
-
-    public function __construct($unix = false)
-    {
-        if ($unix) {
-            $this->unix = $unix;
-            $this->timestamp = gmdate(Time::FORMAT_DATE, $this->unix);
-        }
-    }
-
-    public function time()
-    {
-        $this->unix = time();
-        $this->timestamp = gmdate(Time::FORMAT_DATE, $this->unix);
-        return $this;
-    }
-
-    public function get_unix()
-    {
-        return $this->unix;
-    }
-
-    public function get_timestamp()
-    {
-        return $this->timestamp;
-    }
-
-    public function __toString()
-    {
-        return strval($this->unix);
-    }
-
-    public function parse_date($date)
-    {
-        $parsed = date_parse_from_format(Time::FORMAT_DATE, $date);
-        $this->unix = mktime($parsed['hour'], $parsed['minute'], $parsed['second'], $parsed['month'], $parsed['day'], $parsed['year']);
-        $this->value = $date;
-        $this->timestamp = gmdate(Time::FORMAT_DATE, $this->unix);
-        return $this;
-    }
-
-    public function parse_time($date)
-    {
-        $parsed = date_parse_from_format(Time::FORMAT_TIME, $date);
-        $this->unix = mktime($parsed['hour'], $parsed['minute'], $parsed['second'], date('m'), date('d'), date('y'));
-        $this->value = $date;
-        $this->timestamp = gmdate(Time::FORMAT_DATE, $this->unix);
-        return $this;
-    }
-
-}
-
-/**
- * SQL coordinate
- * @package phpgoose
- */
-class Point
-{
-
-    private $latitude = 0;
-    private $longitute = 0;
-
-    public function __construct($latitude = 0, $longitute = 0)
-    {
-        $this->latitude = $latitude;
-        $this->longitute = $longitute;
-    }
-
-    public function get_latitude()
-    {
-        return $this->latitude;
-    }
-
-    public function get_longitute()
-    {
-        return $this->longitute;
-    }
-}
-
-
-namespace Types;
-
-use Helpers\Generator;
-
-/**
- * Type to create a record ID
- * @return array
- */
-function ID()
-{
-    return array(
-        'primary' => true,
-        'type' => TYPE_BIGINT,
-        'not_null' => true,
-        'default' => Generator::id()
-    );
-}
-
-
-/**
- * Type for creating an encrypted password
- * @return array
- */
-function Password()
-{
-    return array(
-        'primary' => false,
-        'type' => TYPE_PASSWORD,
-        'not_null' => true
-    );
-}
-
-
-/**
- * Type to create time
- * @return array
- */
-function DateTime()
-{
-    return array(
-        'primary' => false,
-        'type' => TYPE_DATETIME,
-        'not_null' => true
-    );
-}
-
-
-namespace Engine;
-
-use phpgoose\Connection;
-
-/**
- * Shield the SQL string
- *
- * @param string $string
- * @return false|string
- */
-function sql_escape_string(string $string) {
-    global $phpgoose_connection;
-
-    if ($phpgoose_connection instanceof Connection) {
-        if (function_exists('mysql_real_escape_string')) {
-            $string = mysql_real_escape_string($string, $phpgoose_connection->get_connection());
-        } elseif (function_exists('mysqli_real_escape_string')) {
-            $string = mysqli_real_escape_string($phpgoose_connection->get_connection(), $string);
+        global $phpsqlgoose_connection;
+
+        if ($phpsqlgoose_connection instanceof Connection) {
+            $string = mysqli_real_escape_string($phpsqlgoose_connection->get_connection(), $string);
+            return $string;
         }
 
         return $string;
     }
 
-    return $string;
-}
+    /**
+     * Safely format an SQL string
+     *
+     * @param string $string
+     * @param array $data
+     * @return string|string[]
+     */
+    function bind(string $string, array $data)
+    {
+        $sql = str_replace(array_keys($data), array_map(function ($e) {
+            if (is_array($e) or is_object($e)) {
+                $e = (array)$e;
 
+                if ($e['escape']) {
+                    return sql_escape_string($e['value']);
+                }
 
-/**
- * Safely format an SQL string
- *
- * @param string $string
- * @param array $data
- * @return string|string[]
- */
-function bind(string $string, array $data) {
-    $sql = str_replace(array_keys($data), array_map(function ($e) {
-        if (is_array($e) or is_object($e)) {
-            $e = (array) $e;
-
-            if ($e['escape']) {
-                return sql_escape_string($e['value']);
+                return $e['value'];
+            } else {
+                return sql_escape_string($e);
             }
+        }, array_values($data)), $string);
 
-            return $e['value'];
-        } else {
-            return sql_escape_string($e);
-        }
-    }, array_values($data)), $string);
+        $sql = preg_replace('/\s+/', ' ', $sql);
 
-    $sql = preg_replace('/\s+/', ' ', $sql);
-
-    return $sql;
+        return $sql;
+    }
+    
 }

@@ -2,6 +2,7 @@
   <dictionary name="maslo">
     <words>
       <w>phpgoose</w>
+      <w>phpsqlgoose</w>
       <w>rtex</w>
     </words>
   </dictionary>

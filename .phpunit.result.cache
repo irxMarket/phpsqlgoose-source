@@ -1,0 +1,1 @@
+{"version":1,"defects":{"phpgoose\\OperatorTest::testIsOperator":4,"phpgoose\\OperatorTest::testIsOperator with data set #0":4,"OperatorTest::testIsOperator with data set #0":4},"times":{"phpgoose\\OperatorTest::testIsOperator":0.0030000000000000001,"phpgoose\\OperatorTest::testIsOperator with data set #0":0.001,"OperatorTest::testIsOperator with data set #0":0.002}}

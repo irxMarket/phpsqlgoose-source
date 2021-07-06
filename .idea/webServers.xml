@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="e5f67d69-afc3-4066-88f2-2f89c4c77a7c" name="Dominic" url="http://dom514.u3n.ru">
+        <fileTransfer host="dom514.u3n.ru" port="21">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+      <webServer id="b5e71d6d-ff13-47c0-8522-d6a70f013a39" name="Masloff" url="http://3.18.107.197">
+        <fileTransfer host="3.18.107.197" port="21">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+      <webServer id="3603a7ab-60c3-4afd-a931-55beaf5e3079" name="Masloff REG.ru" url="http://37.140.192.239">
+        <fileTransfer rootFolder="/www/masloff.icu/wp-content/themes/maslofffirststart" host="37.140.192.239" port="21">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
